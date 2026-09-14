@@ -1,56 +1,74 @@
-# Welcome to your Expo app 👋
+# ClassLens
 
-This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
+A hackathon mobile app that turns class material into organized lecture notes.
+This repository currently contains a standalone Expo SDK 57 / React Native /
+TypeScript app with mock data and Expo Router navigation.
 
-## Get started
+## Run
 
-1. Install dependencies
-
-   ```bash
-   npm install
-   ```
-
-2. Start the app
-
-   ```bash
-   npx expo start
-   ```
-
-In the output, you'll find options to open the app in a
-
-- [development build](https://docs.expo.dev/develop/development-builds/introduction/)
-- [Android emulator](https://docs.expo.dev/workflow/android-studio-emulator/)
-- [iOS simulator](https://docs.expo.dev/workflow/ios-simulator/)
-- [Expo Go](https://expo.dev/go), a limited sandbox for trying out app development with Expo
-
-You can start developing by editing the files inside the **app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
-
-## Get a fresh project
-
-When you're ready, run:
-
-```bash
-npm run reset-project
+```sh
+npx expo start
 ```
 
-This command will move the starter code to the **app-example** directory and create a blank **app** directory where you can start developing.
+Press `i` to open an installed iOS simulator, or `w` for web. Dependencies are
+already described in package.json; on a fresh checkout run `npm ci` first.
 
-### Other setup steps
+```sh
+npx tsc --noEmit
+```
 
-- To set up ESLint for linting, run `npx expo lint`, or follow our guide on ["Using ESLint and Prettier"](https://docs.expo.dev/guides/using-eslint/)
-- If you'd like to set up unit testing, follow our guide on ["Unit Testing with Jest"](https://docs.expo.dev/develop/unit-testing/)
-- Learn more about the TypeScript setup in this template in our guide on ["Using TypeScript"](https://docs.expo.dev/guides/typescript/)
+## Ownership
 
-## Learn more
+| Area | Owner / responsibility |
+| --- | --- |
+| `src/app/` | Frontend: routes, screens, loading and error states |
+| `src/components/` | Frontend: reusable UI |
+| `src/features/` | Frontend: sample fixtures and domain types |
+| `src/hooks/`, `src/constants/`, `src/global.css` | Frontend: shared theme helpers |
+| `src/services/` | Backend: async contracts, currently mocks or explicit placeholders |
+| `src/lib/` | Backend: future Supabase client and integration configuration |
+| `src/types/` | Shared type exports; definitions live in feature type files |
+| `supabase/` (later) | Backend: migrations and Edge Functions |
 
-To learn more about developing your project with Expo, look at the following resources:
+Screens import services, never fixtures. Replace service implementations with
+Supabase calls later while preserving these contracts. Keep this as one repository;
+there is no Node/Express server.
 
-- [Expo documentation](https://docs.expo.dev/): Learn fundamentals, or go into advanced topics with our [guides](https://docs.expo.dev/guides).
-- [Learn Expo tutorial](https://docs.expo.dev/tutorial/introduction/): Follow a step-by-step tutorial where you'll create a project that runs on Android, iOS, and the web.
+## Demo flow
 
-## Join the community
+- Home → Course → Lecture
+- Home → Capture → Try demo processing → Lecture
+- Processing runs four one-second UI stages, then opens the seeded Binary Search
+  Trees lecture. Leaving Processing cancels its timer.
+- Take Photo / Choose Photo and lecture question/quiz actions show coming-soon
+  feedback. They perform no uploads or AI calls.
 
-Join our community of developers creating universal apps.
+Read services return copied mock records. Missing single records return `null`;
+empty lists return `[]`. `createLecture` validates the course and stores a lecture
+in memory for the current app session only. Course lists refresh on focus.
+`uploadMaterial`, `analyzeMaterial`, `askLecture`, and `generateQuiz` reject with
+clear Not implemented errors and are not invoked by the demo.
 
-- [Expo on GitHub](https://github.com/expo/expo): View our open source platform and contribute.
-- [Discord community](https://chat.expo.dev): Chat with Expo users and ask questions.
+All lecture content is sample data. Professor Avery is fictional.
+
+## Deferred work
+
+NativeWind is not installed. This scaffold uses React Native StyleSheet and the
+existing light/dark theme helpers to honor the no-new-dependencies constraint.
+Camera/image picker, persistence, Supabase, Gemini, lecture questions, and quizzes
+are not implemented. Initialize the Supabase CLI structure when backend work starts;
+empty migrations/function directories are intentionally omitted. See
+[src/lib/README.md](src/lib/README.md) for integration ownership.
+
+The original Expo configuration and assets remain. The destructive starter reset
+script was removed. No dependency versions were changed.
+
+## Manual acceptance checks
+
+- Open on iOS and navigate both demo flows, including back navigation.
+- Cancel Processing and wait longer than four seconds; it must not redirect.
+- Open missing course/lecture IDs and verify the Go home action.
+- Open Graph Traversal and verify its empty exam section; open Mathematical
+  Induction and verify empty assignment/exam sections.
+- Exercise capture and lecture placeholder buttons; no backend calls should occur.
+- Check light/dark appearance and scroll the complete lecture.
