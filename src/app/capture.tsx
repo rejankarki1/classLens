@@ -11,6 +11,34 @@ import { StatusBadge } from "@/components/ui/Editorial";
 import { Screen } from "@/components/ui/Screen";
 import { Brand, Fonts } from "@/constants/theme";
 
+interface SelectedPhoto {
+  uri: string;
+  mimeType: string;
+  fileName: string;
+}
+
+const mimeByExtension: Record<string, string> = {
+  jpg: "image/jpeg",
+  jpeg: "image/jpeg",
+  png: "image/png",
+  webp: "image/webp",
+  heic: "image/heic",
+  heif: "image/heif",
+};
+
+/** uploadMaterial validates the MIME type, so fall back to the file extension. */
+function toSelectedPhoto(asset: ImagePicker.ImagePickerAsset): SelectedPhoto {
+  const extension = asset.uri.split("?")[0].split(".").pop()?.toLowerCase() ?? "";
+  const mimeType =
+    asset.mimeType?.trim() || mimeByExtension[extension] || "image/jpeg";
+
+  return {
+    uri: asset.uri,
+    mimeType,
+    fileName: asset.fileName?.trim() || `photo.${extension || "jpg"}`,
+  };
+}
+
 export default function CaptureScreen() {
   const {
     mode = 'photo',
@@ -19,8 +47,9 @@ export default function CaptureScreen() {
     mode?: 'photo' | 'video' | 'audio' | 'file';
     autoOpen?: string;
   }>();
-  const [imageUri, setImageUri] = useState<string | null>(null);
+  const [photo, setPhoto] = useState<SelectedPhoto | null>(null);
   const [busy, setBusy] = useState(false);
+  const imageUri = photo?.uri ?? null;
 
   async function takePhoto() {
     try {
@@ -43,7 +72,7 @@ export default function CaptureScreen() {
       });
 
       if (!result.canceled && result.assets?.[0]?.uri) {
-        setImageUri(result.assets[0].uri);
+        setPhoto(toSelectedPhoto(result.assets[0]));
       }
     } catch {
       Alert.alert(
@@ -78,7 +107,7 @@ export default function CaptureScreen() {
       });
 
       if (!result.canceled && result.assets?.[0]?.uri) {
-        setImageUri(result.assets[0].uri);
+        setPhoto(toSelectedPhoto(result.assets[0]));
       }
     } catch {
       Alert.alert(
@@ -91,12 +120,14 @@ export default function CaptureScreen() {
   }
 
   function continueToProcessing() {
-    if (!imageUri) return;
+    if (!photo) return;
 
     router.push({
       pathname: "/processing",
       params: {
-        imageUri,
+        imageUri: photo.uri,
+        mimeType: photo.mimeType,
+        fileName: photo.fileName,
       },
     });
   }
@@ -166,7 +197,7 @@ export default function CaptureScreen() {
             <Pressable
               accessibilityRole="button"
               accessibilityLabel="Remove selected photo"
-              onPress={() => setImageUri(null)}
+              onPress={() => setPhoto(null)}
               style={({ pressed }) => [
                 styles.removeButton,
                 pressed && styles.pressed,

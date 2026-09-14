@@ -49,7 +49,7 @@ export default function LectureScreen() {
       <ThemedText type="small" themeColor="textSecondary">{course ? `${course.professor} · ` : ''}{formatDate(lecture.createdAt)}</ThemedText>
     </View>
     <LectureSections lecture={lecture} />
-    <StudyActions key={lecture.id} />
+    <StudyActions key={lecture.id} lectureId={lecture.id} />
     {course ? <AppButton secondary title={`Back to ${course.code}`} onPress={() => router.replace({ pathname: '/course/[id]', params: { id: course.id } })} /> : null}
   </Screen>;
 }

@@ -5,12 +5,29 @@ import { useTheme } from '@/hooks/use-theme';
 import { ThemedText } from '@/components/themed-text';
 
 export const processingSteps = ['Reading material', 'Detecting topic', 'Matching course', 'Finding key concepts', 'Building summary'];
-const descriptions = ['Making room for every detail.', 'Connecting the central ideas.', 'Finding where this knowledge belongs.', 'Separating the signal from the noise.', 'Putting it all into perspective.'];
+const processingDescriptions = ['Making room for every detail.', 'Connecting the central ideas.', 'Finding where this knowledge belongs.', 'Separating the signal from the noise.', 'Putting it all into perspective.'];
 
-export function ProcessingCard({ step }: { step: number }) {
+interface Props {
+  step: number;
+  /** Real pipeline stages override the demo labels; the layout is unchanged. */
+  steps?: readonly string[];
+  descriptions?: readonly string[];
+  caption?: string;
+  completeTitle?: string;
+  completeDescription?: string;
+}
+
+export function ProcessingCard({
+  step,
+  steps = processingSteps,
+  descriptions = processingDescriptions,
+  caption = 'DEMO PREVIEW',
+  completeTitle = 'A clearer picture.',
+  completeDescription = 'Your sample notebook is ready to explore.',
+}: Props) {
   const theme = useTheme();
   const [pulse] = useState(() => new Animated.Value(1));
-  const complete = step >= processingSteps.length;
+  const complete = step >= steps.length;
   useEffect(() => {
     let mounted = true;
     let animation: Animated.CompositeAnimation | undefined;
@@ -29,17 +46,17 @@ export function ProcessingCard({ step }: { step: number }) {
     const subscription = AccessibilityInfo.addEventListener('reduceMotionChanged', update);
     return () => { mounted = false; animation?.stop(); subscription.remove(); };
   }, [pulse, complete]);
-  const percent = Math.round(Math.min(step, processingSteps.length) / processingSteps.length * 100);
+  const percent = Math.round(Math.min(step, steps.length) / steps.length * 100);
   return <>
     <View style={styles.hero}>
       <View accessible={false} importantForAccessibility="no-hide-descendants" style={styles.orbit}><View style={styles.innerOrbit}><Animated.View style={[styles.lens, { opacity: pulse }]}><ThemedText allowFontScaling={false} style={styles.star}>✦</ThemedText></Animated.View></View></View>
       <ThemedText style={styles.kicker}>CLASSROOM → CLARITY</ThemedText>
-      <ThemedText style={styles.heroTitle} accessibilityLiveRegion="polite">{complete ? 'A clearer picture.' : processingSteps[step]}</ThemedText>
-      <ThemedText style={styles.description}>{complete ? 'Your sample notebook is ready to explore.' : descriptions[step]}</ThemedText>
+      <ThemedText style={styles.heroTitle} accessibilityLiveRegion="polite">{complete ? completeTitle : steps[step]}</ThemedText>
+      <ThemedText style={styles.description}>{complete ? completeDescription : descriptions[step]}</ThemedText>
       <View style={styles.track} accessibilityRole="progressbar" accessibilityValue={{ min: 0, max: 100, now: percent }} accessibilityLabel="Demo progress"><View style={[styles.fill, { width: `${percent}%` }]} /></View>
-      <ThemedText style={styles.progressLabel}>{complete ? 'COMPLETE' : `STEP ${step + 1} OF ${processingSteps.length}`}  ·  DEMO PREVIEW</ThemedText>
+      <ThemedText style={styles.progressLabel}>{complete ? 'COMPLETE' : `STEP ${step + 1} OF ${steps.length}`}  ·  {caption}</ThemedText>
     </View>
-    <View style={styles.steps}>{processingSteps.map((label, index) => {
+    <View style={styles.steps}>{steps.map((label, index) => {
       const done = index < step;
       const active = index === step;
       return <View key={label} accessible accessibilityLabel={`${label}. ${done ? 'Complete' : active ? 'In progress' : 'Up next'}`} style={[styles.step, { backgroundColor: active ? theme.backgroundSelected : theme.backgroundElement }]}>
