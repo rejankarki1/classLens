@@ -1,26 +1,21 @@
-/**
- * Below are the colors that are used in the app. The colors are defined in the light and dark mode.
- * There are many other ways to style your app. For example, [Nativewind](https://www.nativewind.dev/), [Tamagui](https://tamagui.dev/), [unistyles](https://reactnativeunistyles.vercel.app), etc.
- */
-
-import '@/global.css';
+/** ClassLens paper-and-ink palette with native and web system font fallbacks. */
 
 import { Platform } from 'react-native';
 
 export const Colors = {
   light: {
-    text: '#000000',
-    background: '#ffffff',
-    backgroundElement: '#F0F0F3',
-    backgroundSelected: '#E0E1E6',
-    textSecondary: '#60646C',
+    text: '#192D27',
+    background: '#F6F5EF',
+    backgroundElement: '#FFFFFF',
+    backgroundSelected: '#E7EDE3',
+    textSecondary: '#647068',
   },
   dark: {
-    text: '#ffffff',
-    background: '#000000',
-    backgroundElement: '#212225',
-    backgroundSelected: '#2E3135',
-    textSecondary: '#B0B4BA',
+    text: '#EDF1E8',
+    background: '#111C18',
+    backgroundElement: '#1B2A23',
+    backgroundSelected: '#304236',
+    textSecondary: '#B1BDB2',
   },
 } as const;
 
@@ -44,10 +39,10 @@ export const Fonts = Platform.select({
     mono: 'monospace',
   },
   web: {
-    sans: 'var(--font-display)',
-    serif: 'var(--font-serif)',
-    rounded: 'var(--font-rounded)',
-    mono: 'var(--font-mono)',
+    sans: 'system-ui, sans-serif',
+    serif: 'Georgia, serif',
+    rounded: 'system-ui, sans-serif',
+    mono: 'monospace',
   },
 });
 
@@ -62,4 +57,6 @@ export const Spacing = {
 } as const;
 
 export const BottomTabInset = Platform.select({ ios: 50, android: 80 }) ?? 0;
-export const MaxContentWidth = 800;
+export const MaxContentWidth = 640;
+
+export const Brand = { forest: '#234E3C', lime: '#D5EF92', paper: '#F6F5EF', ink: '#192D27', muted: '#B9CEBF' } as const;

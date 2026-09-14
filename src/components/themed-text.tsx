@@ -13,8 +13,9 @@ export function ThemedText({ style, type = 'default', themeColor, ...rest }: The
 
   return (
     <Text
+      accessibilityRole={type === 'title' || type === 'subtitle' ? 'header' : undefined}
       style={[
-        { color: theme[themeColor ?? 'text'] },
+        { color: theme[themeColor ?? 'text'], fontFamily: Fonts.sans },
         type === 'default' && styles.default,
         type === 'title' && styles.title,
         type === 'small' && styles.small,
@@ -47,13 +48,13 @@ const styles = StyleSheet.create({
     fontWeight: 500,
   },
   title: {
-    fontSize: 48,
+    fontSize: 40,
     fontWeight: 600,
-    lineHeight: 52,
+    lineHeight: 44,
   },
   subtitle: {
     fontSize: 32,
-    lineHeight: 44,
+    lineHeight: 40,
     fontWeight: 600,
   },
   link: {
@@ -63,7 +64,7 @@ const styles = StyleSheet.create({
   linkPrimary: {
     lineHeight: 30,
     fontSize: 14,
-    color: '#3c87f7',
+    color: '#387656',
   },
   code: {
     fontFamily: Fonts.mono,

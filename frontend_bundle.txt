@@ -1,0 +1,1851 @@
+import { DarkTheme, DefaultTheme, Stack, ThemeProvider } from 'expo-router';
+import { StatusBar } from 'expo-status-bar';
+import { useTheme } from '@/hooks/use-theme';
+import { Brand } from '@/constants/theme';
+
+export default function RootLayout() {
+  const theme = useTheme();
+  const dark = theme.background !== Brand.paper;
+  const navigationTheme = dark ? DarkTheme : DefaultTheme;
+  return <ThemeProvider value={{ ...navigationTheme, colors: { ...navigationTheme.colors, background: theme.background, card: theme.background, text: theme.text, primary: theme.text } }}>
+    <StatusBar style={dark ? 'light' : 'dark'} />
+    <Stack screenOptions={{ headerShadowVisible: false, headerStyle: { backgroundColor: theme.background }, headerTintColor: theme.text, headerTitleStyle: { fontSize: 16, fontWeight: '600' }, contentStyle: { backgroundColor: theme.background }, headerBackButtonDisplayMode: 'minimal' }}>
+      <Stack.Screen name="index" options={{ title: 'ClassLens' }} />
+      <Stack.Screen name="course/[id]" options={{ title: 'Course workspace' }} />
+      <Stack.Screen name="lecture/[id]" options={{ title: 'Lecture notebook' }} />
+      <Stack.Screen name="capture" options={{ title: 'Capture lecture' }} />
+      <Stack.Screen name="processing" options={{ title: 'The clarity process' }} />
+    </Stack>
+  </ThemeProvider>;
+}
+import { router, useFocusEffect } from "expo-router";
+import { useCallback, useState } from "react";
+import { Modal, Pressable, StyleSheet, View } from "react-native";
+
+import { CourseCard } from "@/components/CourseCard";
+import { LectureCard } from "@/components/LectureCard";
+import { ScanArtwork } from "@/components/ScanArtwork";
+import { ThemedText } from "@/components/themed-text";
+import { AppButton } from "@/components/ui/AppButton";
+import {
+  EmptyState,
+  SectionHeader,
+  StatusBadge,
+} from "@/components/ui/Editorial";
+import { Screen } from "@/components/ui/Screen";
+import { Brand, Fonts } from "@/constants/theme";
+import { getCourses } from "@/services/courses";
+import { getLectures } from "@/services/lectures";
+import type { Course, Lecture } from "@/types";
+
+export default function HomeScreen() {
+  const [courses, setCourses] = useState<Course[]>([]);
+  const [recent, setRecent] = useState<Lecture[]>([]);
+
+  const [recentError, setRecentError] = useState(false);
+  const [recentLoading, setRecentLoading] = useState(true);
+
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
+  const [attempt, setAttempt] = useState(0);
+
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [profileOpen, setProfileOpen] = useState(false);
+
+  useFocusEffect(
+    useCallback(() => {
+      let active = true;
+
+      setLoading(true);
+      setError(false);
+      setRecentError(false);
+      setRecentLoading(true);
+
+      getCourses()
+        .then(async (data) => {
+          if (!active) return;
+
+          setCourses(data);
+          setLoading(false);
+
+          const results = await Promise.allSettled(
+            data.map((course) => getLectures(course.id)),
+          );
+
+          if (!active) return;
+
+          const latestLectures = results
+            .flatMap((result) =>
+              result.status === "fulfilled" ? result.value : [],
+            )
+            .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+            .slice(0, 2);
+
+          setRecent(latestLectures);
+          setRecentError(
+            results.some((result) => result.status === "rejected"),
+          );
+          setRecentLoading(false);
+        })
+        .catch(() => {
+          if (active) {
+            setError(true);
+            setRecentLoading(false);
+          }
+        })
+        .finally(() => {
+          if (active) {
+            setLoading(false);
+          }
+        });
+
+      return () => {
+        active = false;
+      };
+
+      // Retry intentionally creates a new focused request.
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [attempt]),
+  );
+
+  return (
+    <>
+      <Screen>
+        {/* ───────────────── TOP BAR ───────────────── */}
+
+        <View style={styles.topBar}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Open menu"
+            onPress={() => setMenuOpen(true)}
+            style={({ pressed }) => [
+              styles.iconButton,
+              pressed && styles.pressed,
+            ]}
+          >
+            <ThemedText style={styles.menuIcon}>☰</ThemedText>
+          </Pressable>
+
+          <View style={styles.brand}>
+            <View style={styles.brandMark}>
+              <ThemedText style={styles.brandMarkText}>✦</ThemedText>
+            </View>
+
+            <ThemedText style={styles.brandName}>ClassLens</ThemedText>
+          </View>
+
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Open profile"
+            onPress={() => setProfileOpen(true)}
+            style={({ pressed }) => [styles.avatar, pressed && styles.pressed]}
+          >
+            <ThemedText style={styles.avatarText}>P</ThemedText>
+          </Pressable>
+        </View>
+
+        {/* ───────────────── INTRO ───────────────── */}
+
+        <View style={styles.intro}>
+          <ThemedText type="smallBold" style={styles.eyebrow}>
+            YOUR LEARNING, IN FOCUS
+          </ThemedText>
+
+          <ThemedText type="title" style={styles.heroTitle}>
+            Less scattered.{"\n"}
+            <ThemedText type="title" style={styles.heroAccent}>
+              More understood.
+            </ThemedText>
+          </ThemedText>
+
+          <ThemedText themeColor="textSecondary" style={styles.heroDescription}>
+            Capture what happens in class and turn it into organized material
+            you can actually study from.
+          </ThemedText>
+        </View>
+
+        {/* ───────────────── STUDENT STRIP ───────────────── */}
+
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="View student profile"
+          onPress={() => setProfileOpen(true)}
+          style={({ pressed }) => [
+            styles.studentStrip,
+            pressed && styles.cardPressed,
+          ]}
+        >
+          <View style={styles.studentInitial}>
+            <ThemedText style={styles.studentInitialText}>PB</ThemedText>
+          </View>
+
+          <View style={styles.studentCopy}>
+            <ThemedText style={styles.studentTitle}>
+              Your academic workspace
+            </ThemedText>
+
+            <ThemedText type="small" themeColor="textSecondary">
+              Student profile · Courses · Study progress
+            </ThemedText>
+          </View>
+
+          <ThemedText style={styles.chevron}>›</ThemedText>
+        </Pressable>
+
+        {/* ───────────────── CAPTURE HERO ───────────────── */}
+
+        <View style={styles.captureHero}>
+          <View style={styles.heroDecorOne} />
+          <View style={styles.heroDecorTwo} />
+
+          <View style={styles.captureHeader}>
+            <View style={styles.captureHeaderCopy}>
+              <ThemedText style={styles.captureEyebrow}>
+                START WITH THE MOMENT
+              </ThemedText>
+
+              <ThemedText style={styles.captureHeading}>
+                What are we learning?
+              </ThemedText>
+            </View>
+
+            <StatusBadge label="READY" />
+          </View>
+
+          <ScanArtwork compact />
+
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Capture class material"
+            accessibilityHint="Take or choose a photo of class material"
+            onPress={() => router.push("/capture")}
+            style={({ pressed }) => [
+              styles.captureButton,
+              pressed && styles.capturePressed,
+            ]}
+          >
+            <View style={styles.captureButtonIcon}>
+              <ThemedText style={styles.captureButtonIconText}>◎</ThemedText>
+            </View>
+
+            <View style={styles.captureButtonCopy}>
+              <ThemedText style={styles.captureButtonTitle}>
+                Capture your class
+              </ThemedText>
+
+              <ThemedText style={styles.captureButtonSubtitle}>
+                Photo · Notes · Slides · Whiteboards
+              </ThemedText>
+            </View>
+
+            <View style={styles.captureArrow}>
+              <ThemedText style={styles.captureArrowText}>→</ThemedText>
+            </View>
+          </Pressable>
+
+          <View style={styles.captureModes}>
+            <CaptureMode icon="▣" title="Photo" />
+            <CaptureMode icon="◉" title="Audio" muted />
+            <CaptureMode icon="↥" title="File" muted />
+          </View>
+        </View>
+
+        {/* ───────────────── RECENT ───────────────── */}
+
+        {!loading && !error ? (
+          <View style={styles.section}>
+            <SectionHeader title="Continue studying" detail="Latest lectures" />
+
+            {recentError ? (
+              <AppButton
+                secondary
+                title="Some lectures couldn’t load · Retry"
+                onPress={() => setAttempt((value) => value + 1)}
+              />
+            ) : null}
+
+            {recentLoading ? (
+              <EmptyState
+                loading
+                title="Finding your latest ideas"
+                description="Your courses are already available while ClassLens gathers recent lectures."
+              />
+            ) : recent.length ? (
+              recent.map((lecture) => (
+                <LectureCard key={lecture.id} lecture={lecture} />
+              ))
+            ) : !recentError ? (
+              <EmptyState
+                title="Your next idea starts here"
+                description="Capture something from class and ClassLens will organize it into a study-ready lecture."
+                action="Capture your first lecture"
+                onPress={() => router.push("/capture")}
+              />
+            ) : null}
+          </View>
+        ) : null}
+
+        {/* ───────────────── COURSES ───────────────── */}
+
+        <View style={styles.section}>
+          <View style={styles.courseHeader}>
+            <SectionHeader
+              title="Your courses"
+              detail={
+                loading
+                  ? "Loading…"
+                  : error
+                    ? undefined
+                    : `${courses.length} notebooks`
+              }
+            />
+
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Add course"
+              onPress={() => setMenuOpen(true)}
+              style={({ pressed }) => [
+                styles.addButton,
+                pressed && styles.pressed,
+              ]}
+            >
+              <ThemedText style={styles.addButtonText}>＋</ThemedText>
+            </Pressable>
+          </View>
+
+          {loading ? (
+            <EmptyState
+              loading
+              title="Opening your workspace"
+              description="Gathering your courses and lecture notes."
+            />
+          ) : error ? (
+            <EmptyState
+              title="Let’s try that again"
+              description="Your courses couldn’t be loaded."
+              action="Try again"
+              onPress={() => setAttempt((value) => value + 1)}
+            />
+          ) : courses.length ? (
+            courses.map((course) => (
+              <CourseCard key={course.id} course={course} />
+            ))
+          ) : (
+            <EmptyState
+              title="A fresh notebook"
+              description="Add a course and everything you capture for it will stay organized here."
+            />
+          )}
+        </View>
+
+        {/* ───────────────── STUDY PROMO ───────────────── */}
+
+        <View style={styles.studyPanel}>
+          <View style={styles.studyMark}>
+            <ThemedText style={styles.studyMarkText}>✦</ThemedText>
+          </View>
+
+          <View style={styles.studyCopy}>
+            <ThemedText style={styles.studyEyebrow}>CLASSLENS STUDY</ThemedText>
+
+            <ThemedText style={styles.studyTitle}>
+              Capture it once.{"\n"}Study it differently.
+            </ThemedText>
+
+            <ThemedText
+              themeColor="textSecondary"
+              style={styles.studyDescription}
+            >
+              Summaries, key concepts, lecture questions and quizzes all begin
+              with the material you save.
+            </ThemedText>
+          </View>
+        </View>
+
+        <ThemedText
+          type="small"
+          themeColor="textSecondary"
+          style={styles.footer}
+        >
+          Made for the way you learn. ✦ ClassLens
+        </ThemedText>
+      </Screen>
+
+      {/* ───────────────── MENU SHEET ───────────────── */}
+
+      <Modal
+        transparent
+        visible={menuOpen}
+        animationType="fade"
+        onRequestClose={() => setMenuOpen(false)}
+      >
+        <Pressable
+          style={styles.modalBackdrop}
+          onPress={() => setMenuOpen(false)}
+        >
+          <Pressable
+            style={styles.menuSheet}
+            onPress={(event) => event.stopPropagation()}
+          >
+            <View style={styles.sheetHandle} />
+
+            <View style={styles.menuBrand}>
+              <View style={styles.brandMark}>
+                <ThemedText style={styles.brandMarkText}>✦</ThemedText>
+              </View>
+
+              <View>
+                <ThemedText style={styles.menuTitle}>ClassLens</ThemedText>
+                <ThemedText type="small" themeColor="textSecondary">
+                  Your academic workspace
+                </ThemedText>
+              </View>
+            </View>
+
+            <MenuItem
+              title="Capture lecture"
+              detail="Photo, notes or slides"
+              onPress={() => {
+                setMenuOpen(false);
+                router.push("/capture");
+              }}
+            />
+
+            <MenuItem
+              title="Courses"
+              detail={`${courses.length} available`}
+              onPress={() => setMenuOpen(false)}
+            />
+
+            <MenuItem
+              title="Profile"
+              detail="Academic information"
+              onPress={() => {
+                setMenuOpen(false);
+                setProfileOpen(true);
+              }}
+            />
+
+            <View style={styles.menuDivider} />
+
+            <MenuItem
+              title="Add course"
+              detail="Course creation UI comes next"
+              onPress={() => setMenuOpen(false)}
+            />
+          </Pressable>
+        </Pressable>
+      </Modal>
+
+      {/* ───────────────── PROFILE SHEET ───────────────── */}
+
+      <Modal
+        transparent
+        visible={profileOpen}
+        animationType="fade"
+        onRequestClose={() => setProfileOpen(false)}
+      >
+        <Pressable
+          style={styles.modalBackdrop}
+          onPress={() => setProfileOpen(false)}
+        >
+          <Pressable
+            style={styles.profileSheet}
+            onPress={(event) => event.stopPropagation()}
+          >
+            <View style={styles.sheetHandle} />
+
+            <View style={styles.profileHeader}>
+              <View style={styles.profileAvatar}>
+                <ThemedText style={styles.profileAvatarText}>PB</ThemedText>
+              </View>
+
+              <View style={styles.profileHeaderCopy}>
+                <ThemedText style={styles.profileTitle}>
+                  Student profile
+                </ThemedText>
+
+                <ThemedText type="small" themeColor="textSecondary">
+                  Personalize ClassLens around your academic journey.
+                </ThemedText>
+              </View>
+            </View>
+
+            <View style={styles.profileField}>
+              <ThemedText type="small" themeColor="textSecondary">
+                CLASSIFICATION
+              </ThemedText>
+              <ThemedText style={styles.profileValue}>
+                Not selected yet
+              </ThemedText>
+            </View>
+
+            <View style={styles.profileField}>
+              <ThemedText type="small" themeColor="textSecondary">
+                MAJOR
+              </ThemedText>
+              <ThemedText style={styles.profileValue}>Not added yet</ThemedText>
+            </View>
+
+            <View style={styles.profileField}>
+              <ThemedText type="small" themeColor="textSecondary">
+                UNIVERSITY
+              </ThemedText>
+              <ThemedText style={styles.profileValue}>Not added yet</ThemedText>
+            </View>
+
+            <AppButton
+              title="Close profile"
+              onPress={() => setProfileOpen(false)}
+            />
+          </Pressable>
+        </Pressable>
+      </Modal>
+    </>
+  );
+}
+
+function CaptureMode({
+  icon,
+  title,
+  muted = false,
+}: {
+  icon: string;
+  title: string;
+  muted?: boolean;
+}) {
+  return (
+    <View style={[styles.modeCard, muted && styles.modeMuted]}>
+      <ThemedText style={styles.modeIcon}>{icon}</ThemedText>
+
+      <ThemedText style={styles.modeTitle}>{title}</ThemedText>
+
+      {muted ? (
+        <ThemedText style={styles.modeSoon}>NEXT</ThemedText>
+      ) : (
+        <ThemedText style={styles.modeReady}>READY</ThemedText>
+      )}
+    </View>
+  );
+}
+
+function MenuItem({
+  title,
+  detail,
+  onPress,
+}: {
+  title: string;
+  detail: string;
+  onPress: () => void;
+}) {
+  return (
+    <Pressable
+      accessibilityRole="button"
+      onPress={onPress}
+      style={({ pressed }) => [styles.menuItem, pressed && styles.cardPressed]}
+    >
+      <View style={styles.menuItemCopy}>
+        <ThemedText style={styles.menuItemTitle}>{title}</ThemedText>
+
+        <ThemedText type="small" themeColor="textSecondary">
+          {detail}
+        </ThemedText>
+      </View>
+
+      <ThemedText style={styles.menuChevron}>›</ThemedText>
+    </Pressable>
+  );
+}
+
+const styles = StyleSheet.create({
+  topBar: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 16,
+  },
+
+  iconButton: {
+    width: 44,
+    height: 44,
+    borderRadius: 14,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#EBEEE8",
+  },
+
+  menuIcon: {
+    color: Brand.ink,
+    fontSize: 20,
+  },
+
+  pressed: {
+    opacity: 0.55,
+  },
+
+  cardPressed: {
+    opacity: 0.82,
+    transform: [{ scale: 0.985 }],
+  },
+
+  brand: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+
+  brandMark: {
+    width: 30,
+    height: 30,
+    borderRadius: 10,
+    backgroundColor: Brand.forest,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+
+  brandMarkText: {
+    color: Brand.lime,
+    fontSize: 14,
+  },
+
+  brandName: {
+    color: Brand.ink,
+    fontSize: 18,
+    fontWeight: "700",
+  },
+
+  avatar: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: Brand.forest,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+
+  avatarText: {
+    color: "#FFFFFF",
+    fontWeight: "700",
+  },
+
+  intro: {
+    gap: 14,
+  },
+
+  eyebrow: {
+    color: "#738079",
+    fontSize: 11,
+    letterSpacing: 1.2,
+  },
+
+  heroTitle: {
+    fontFamily: Fonts.serif,
+    fontWeight: "400",
+    letterSpacing: -1.5,
+    fontSize: 40,
+    lineHeight: 46,
+  },
+
+  heroAccent: {
+    fontFamily: Fonts.serif,
+    fontWeight: "400",
+    color: Brand.forest,
+  },
+
+  heroDescription: {
+    fontSize: 16,
+    lineHeight: 24,
+    maxWidth: 520,
+  },
+
+  studentStrip: {
+    padding: 14,
+    borderRadius: 18,
+    backgroundColor: "#EBEEE7",
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+  },
+
+  studentInitial: {
+    width: 44,
+    height: 44,
+    borderRadius: 14,
+    backgroundColor: "#D8E3D4",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+
+  studentInitialText: {
+    color: Brand.forest,
+    fontSize: 12,
+    fontWeight: "800",
+  },
+
+  studentCopy: {
+    flex: 1,
+    gap: 3,
+  },
+
+  studentTitle: {
+    color: Brand.ink,
+    fontSize: 14,
+    fontWeight: "700",
+  },
+
+  chevron: {
+    color: Brand.forest,
+    fontSize: 26,
+  },
+
+  captureHero: {
+    backgroundColor: Brand.forest,
+    borderRadius: 28,
+    padding: 20,
+    gap: 18,
+    overflow: "hidden",
+    position: "relative",
+  },
+
+  heroDecorOne: {
+    position: "absolute",
+    width: 220,
+    height: 220,
+    borderRadius: 110,
+    right: -110,
+    top: -110,
+    backgroundColor: "#2F5A48",
+  },
+
+  heroDecorTwo: {
+    position: "absolute",
+    width: 140,
+    height: 140,
+    borderRadius: 70,
+    left: -80,
+    bottom: -80,
+    backgroundColor: "#2A5544",
+  },
+
+  captureHeader: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    justifyContent: "space-between",
+    gap: 12,
+  },
+
+  captureHeaderCopy: {
+    flex: 1,
+    gap: 5,
+  },
+
+  captureEyebrow: {
+    color: Brand.lime,
+    fontSize: 10,
+    letterSpacing: 1.4,
+    fontWeight: "800",
+  },
+
+  captureHeading: {
+    color: "#FFFFFF",
+    fontSize: 24,
+    lineHeight: 30,
+    fontWeight: "600",
+  },
+
+  captureButton: {
+    minHeight: 78,
+    borderRadius: 20,
+    padding: 14,
+    backgroundColor: "#F5F5EE",
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+  },
+
+  capturePressed: {
+    opacity: 0.92,
+    transform: [{ scale: 0.985 }],
+  },
+
+  captureButtonIcon: {
+    width: 50,
+    height: 50,
+    borderRadius: 16,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#E0E9D7",
+  },
+
+  captureButtonIconText: {
+    color: Brand.forest,
+    fontSize: 25,
+  },
+
+  captureButtonCopy: {
+    flex: 1,
+    gap: 3,
+  },
+
+  captureButtonTitle: {
+    color: Brand.ink,
+    fontSize: 16,
+    fontWeight: "700",
+  },
+
+  captureButtonSubtitle: {
+    color: "#748077",
+    fontSize: 11,
+  },
+
+  captureArrow: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: Brand.lime,
+  },
+
+  captureArrowText: {
+    color: Brand.ink,
+    fontSize: 17,
+    fontWeight: "700",
+  },
+
+  captureModes: {
+    flexDirection: "row",
+    gap: 8,
+  },
+
+  modeCard: {
+    flex: 1,
+    minHeight: 82,
+    borderRadius: 16,
+    padding: 10,
+    backgroundColor: "#315D4B",
+    justifyContent: "center",
+    alignItems: "center",
+    gap: 3,
+  },
+
+  modeMuted: {
+    opacity: 0.55,
+  },
+
+  modeIcon: {
+    color: Brand.lime,
+    fontSize: 17,
+  },
+
+  modeTitle: {
+    color: "#FFFFFF",
+    fontSize: 11,
+    fontWeight: "700",
+  },
+
+  modeReady: {
+    color: Brand.lime,
+    fontSize: 7,
+    letterSpacing: 1,
+    fontWeight: "800",
+  },
+
+  modeSoon: {
+    color: "#B5C7BB",
+    fontSize: 7,
+    letterSpacing: 1,
+    fontWeight: "800",
+  },
+
+  section: {
+    gap: 16,
+  },
+
+  courseHeader: {
+    gap: 10,
+  },
+
+  addButton: {
+    alignSelf: "flex-end",
+    width: 38,
+    height: 38,
+    borderRadius: 13,
+    backgroundColor: Brand.forest,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+
+  addButtonText: {
+    color: Brand.lime,
+    fontSize: 21,
+  },
+
+  studyPanel: {
+    borderRadius: 24,
+    padding: 20,
+    backgroundColor: "#E8EFDE",
+    gap: 14,
+  },
+
+  studyMark: {
+    width: 46,
+    height: 46,
+    borderRadius: 15,
+    backgroundColor: Brand.forest,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+
+  studyMarkText: {
+    color: Brand.lime,
+    fontSize: 20,
+  },
+
+  studyCopy: {
+    gap: 6,
+  },
+
+  studyEyebrow: {
+    color: "#72816F",
+    fontSize: 9,
+    letterSpacing: 1.3,
+    fontWeight: "800",
+  },
+
+  studyTitle: {
+    color: Brand.ink,
+    fontFamily: Fonts.serif,
+    fontSize: 26,
+    lineHeight: 32,
+  },
+
+  studyDescription: {
+    fontSize: 13,
+    lineHeight: 20,
+  },
+
+  footer: {
+    textAlign: "center",
+    marginTop: 8,
+  },
+
+  modalBackdrop: {
+    flex: 1,
+    justifyContent: "flex-end",
+    backgroundColor: "rgba(13, 30, 24, 0.42)",
+  },
+
+  menuSheet: {
+    backgroundColor: "#F7F6F0",
+    borderTopLeftRadius: 30,
+    borderTopRightRadius: 30,
+    padding: 22,
+    paddingBottom: 36,
+    gap: 12,
+  },
+
+  profileSheet: {
+    backgroundColor: "#F7F6F0",
+    borderTopLeftRadius: 30,
+    borderTopRightRadius: 30,
+    padding: 22,
+    paddingBottom: 36,
+    gap: 18,
+  },
+
+  sheetHandle: {
+    width: 44,
+    height: 5,
+    borderRadius: 999,
+    backgroundColor: "#D4D9D1",
+    alignSelf: "center",
+    marginBottom: 6,
+  },
+
+  menuBrand: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    marginBottom: 6,
+  },
+
+  menuTitle: {
+    color: Brand.ink,
+    fontSize: 20,
+    fontWeight: "700",
+  },
+
+  menuItem: {
+    minHeight: 66,
+    padding: 14,
+    borderRadius: 18,
+    backgroundColor: "#ECEFE8",
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+  },
+
+  menuItemCopy: {
+    flex: 1,
+    gap: 3,
+  },
+
+  menuItemTitle: {
+    color: Brand.ink,
+    fontSize: 15,
+    fontWeight: "700",
+  },
+
+  menuChevron: {
+    color: Brand.forest,
+    fontSize: 24,
+  },
+
+  menuDivider: {
+    height: 1,
+    backgroundColor: "#E2E5DF",
+    marginVertical: 4,
+  },
+
+  profileHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 14,
+  },
+
+  profileAvatar: {
+    width: 64,
+    height: 64,
+    borderRadius: 22,
+    backgroundColor: Brand.forest,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+
+  profileAvatarText: {
+    color: "#FFFFFF",
+    fontSize: 20,
+    fontWeight: "800",
+  },
+
+  profileHeaderCopy: {
+    flex: 1,
+    gap: 4,
+  },
+
+  profileTitle: {
+    color: Brand.ink,
+    fontSize: 21,
+    fontWeight: "700",
+  },
+
+  profileField: {
+    borderRadius: 18,
+    padding: 16,
+    gap: 5,
+    backgroundColor: "#ECEFE8",
+  },
+
+  profileValue: {
+    color: Brand.ink,
+    fontSize: 16,
+    fontWeight: "600",
+  },
+});
+import * as ImagePicker from "expo-image-picker";
+import { router } from "expo-router";
+import { useState } from "react";
+import { Alert, Image, Pressable, StyleSheet, View } from "react-native";
+
+import { ScanArtwork } from "@/components/ScanArtwork";
+import { ThemedText } from "@/components/themed-text";
+import { AppButton } from "@/components/ui/AppButton";
+import { AppCard } from "@/components/ui/AppCard";
+import { StatusBadge } from "@/components/ui/Editorial";
+import { Screen } from "@/components/ui/Screen";
+import { Brand, Fonts } from "@/constants/theme";
+
+export default function CaptureScreen() {
+  const [imageUri, setImageUri] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  async function takePhoto() {
+    try {
+      setBusy(true);
+
+      const permission = await ImagePicker.requestCameraPermissionsAsync();
+
+      if (!permission.granted) {
+        Alert.alert(
+          "Camera permission required",
+          "ClassLens needs camera access so you can capture class material.",
+        );
+        return;
+      }
+
+      const result = await ImagePicker.launchCameraAsync({
+        mediaTypes: ["images"],
+        quality: 0.9,
+        allowsEditing: false,
+      });
+
+      if (!result.canceled && result.assets?.[0]?.uri) {
+        setImageUri(result.assets[0].uri);
+      }
+    } catch {
+      Alert.alert(
+        "Camera unavailable",
+        "ClassLens could not open the camera. Please try again.",
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function choosePhoto() {
+    try {
+      setBusy(true);
+
+      const permission =
+        await ImagePicker.requestMediaLibraryPermissionsAsync();
+
+      if (!permission.granted) {
+        Alert.alert(
+          "Photo access required",
+          "ClassLens needs access to your photo library so you can choose class material.",
+        );
+        return;
+      }
+
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ["images"],
+        quality: 0.9,
+        allowsEditing: false,
+        selectionLimit: 1,
+      });
+
+      if (!result.canceled && result.assets?.[0]?.uri) {
+        setImageUri(result.assets[0].uri);
+      }
+    } catch {
+      Alert.alert(
+        "Photos unavailable",
+        "ClassLens could not open your photo library. Please try again.",
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function continueToProcessing() {
+    if (!imageUri) return;
+
+    router.push({
+      pathname: "/processing",
+      params: {
+        imageUri,
+      },
+    });
+  }
+
+  return (
+    <Screen>
+      <StatusBadge label="01 / CAPTURE" />
+
+      <View style={styles.intro}>
+        <ThemedText type="title" style={styles.title}>
+          Big ideas.{"\n"}One little capture.
+        </ThemedText>
+
+        <ThemedText themeColor="textSecondary">
+          A slide, a whiteboard, a page of notes. Start with what’s in front of
+          you.
+        </ThemedText>
+      </View>
+
+      {imageUri ? (
+        <>
+          <View style={styles.previewShell}>
+            <Image
+              source={{ uri: imageUri }}
+              style={styles.preview}
+              resizeMode="cover"
+              accessibilityLabel="Selected class material"
+            />
+
+            <View style={styles.readyBadge}>
+              <ThemedText style={styles.readyText}>
+                ✓ READY TO ANALYZE
+              </ThemedText>
+            </View>
+          </View>
+
+          <AppCard>
+            <StatusBadge label="MATERIAL READY" />
+
+            <ThemedText style={styles.cardTitle}>Looks good.</ThemedText>
+
+            <ThemedText themeColor="textSecondary">
+              Continue and ClassLens will turn this material into an organized
+              lecture.
+            </ThemedText>
+
+            <AppButton
+              title={busy ? "Preparing…" : "Continue to analysis →"}
+              disabled={busy}
+              onPress={continueToProcessing}
+            />
+
+            <AppButton
+              title="Retake photo"
+              secondary
+              disabled={busy}
+              onPress={takePhoto}
+            />
+
+            <AppButton
+              title="Choose another photo"
+              secondary
+              disabled={busy}
+              onPress={choosePhoto}
+            />
+
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Remove selected photo"
+              onPress={() => setImageUri(null)}
+              style={({ pressed }) => [
+                styles.removeButton,
+                pressed && styles.pressed,
+              ]}
+            >
+              <ThemedText style={styles.removeText}>Remove photo</ThemedText>
+            </Pressable>
+          </AppCard>
+        </>
+      ) : (
+        <>
+          <View style={styles.scan}>
+            <ScanArtwork />
+
+            <ThemedText style={styles.scanLabel}>
+              FRAME THE IDEA. FIND THE CLARITY.
+            </ThemedText>
+          </View>
+
+          <AppButton
+            title={busy ? "Opening camera…" : "Take Photo"}
+            disabled={busy}
+            onPress={takePhoto}
+            accessibilityHint="Opens the device camera"
+          />
+
+          <AppButton
+            title={busy ? "Opening photos…" : "Choose Photo"}
+            secondary
+            disabled={busy}
+            onPress={choosePhoto}
+            accessibilityHint="Opens the photo library"
+          />
+
+          <AppCard>
+            <StatusBadge label="CAPTURE TIPS" />
+
+            <ThemedText style={styles.cardTitle}>
+              Give ClassLens a clear view.
+            </ThemedText>
+
+            <ThemedText themeColor="textSecondary">
+              Slides, whiteboards, handwritten notes, diagrams, and textbook
+              pages all work best when they are well lit and fully visible.
+            </ThemedText>
+          </AppCard>
+        </>
+      )}
+    </Screen>
+  );
+}
+
+const styles = StyleSheet.create({
+  intro: {
+    gap: 16,
+  },
+
+  title: {
+    fontFamily: Fonts.serif,
+    fontWeight: "400",
+    letterSpacing: -1,
+  },
+
+  scan: {
+    backgroundColor: Brand.forest,
+    borderRadius: 24,
+    padding: 16,
+    gap: 8,
+  },
+
+  scanLabel: {
+    color: Brand.muted,
+    textAlign: "center",
+    fontSize: 10,
+    letterSpacing: 1,
+    paddingBottom: 8,
+  },
+
+  previewShell: {
+    borderRadius: 24,
+    overflow: "hidden",
+    backgroundColor: Brand.forest,
+    minHeight: 380,
+    position: "relative",
+  },
+
+  preview: {
+    width: "100%",
+    height: 420,
+  },
+
+  readyBadge: {
+    position: "absolute",
+    left: 16,
+    bottom: 16,
+    backgroundColor: Brand.lime,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 12,
+  },
+
+  readyText: {
+    color: Brand.ink,
+    fontWeight: "700",
+    fontSize: 11,
+    letterSpacing: 1,
+  },
+
+  cardTitle: {
+    fontSize: 24,
+    lineHeight: 32,
+    fontWeight: "500",
+  },
+
+  removeButton: {
+    minHeight: 48,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+
+  removeText: {
+    color: "#A14E4E",
+    fontWeight: "600",
+  },
+
+  pressed: {
+    opacity: 0.55,
+  },
+});
+import { router, useFocusEffect } from 'expo-router';
+import { useCallback, useState } from 'react';
+import { ProcessingCard, processingSteps } from '@/components/ProcessingCard';
+import { ThemedText } from '@/components/themed-text';
+import { AppButton } from '@/components/ui/AppButton';
+import { Screen } from '@/components/ui/Screen';
+import { StatusBadge } from '@/components/ui/Editorial';
+
+export default function ProcessingScreen() {
+  const [step, setStep] = useState(0);
+  useFocusEffect(useCallback(() => {
+    setStep(0);
+    let current = 0;
+    const timer = setInterval(() => {
+      current += 1;
+      if (current <= processingSteps.length) setStep(current);
+      else {
+        clearInterval(timer);
+        router.replace({ pathname: '/lecture/[id]', params: { id: 'binary-search-trees' } });
+      }
+    }, 1400);
+    return () => clearInterval(timer);
+  }, []));
+
+  return <Screen footer={<AppButton title="Cancel demo" secondary onPress={() => router.canGoBack() ? router.back() : router.replace('/')} />}>
+    <StatusBadge label="02 / UNDERSTAND" />
+    <ThemedText type="subtitle">A little order. A lot of possibility.</ThemedText>
+    <ThemedText themeColor="textSecondary">See how class material becomes an organized notebook. This is a timed demo, not live AI analysis.</ThemedText>
+    <ProcessingCard step={step} />
+    <ThemedText>Next up: your sample Binary Search Trees notebook.</ThemedText>
+  </Screen>;
+}
+import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
+import { useCallback, useState } from 'react';
+import { View } from 'react-native';
+import { EmptyState, SectionHeader, StatusBadge } from '@/components/ui/Editorial';
+import { LectureCard } from '@/components/LectureCard';
+import { ThemedText } from '@/components/themed-text';
+import { AppButton } from '@/components/ui/AppButton';
+import { Screen } from '@/components/ui/Screen';
+import { getCourse } from '@/services/courses';
+import { getLectures } from '@/services/lectures';
+import type { Course, Lecture } from '@/types';
+
+export default function CourseScreen() {
+  const { id } = useLocalSearchParams<{ id: string }>();
+  const [data, setData] = useState<{ course: Course | null; lectures: Lecture[] } | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
+  const [attempt, setAttempt] = useState(0);
+
+  useFocusEffect(useCallback(() => {
+    let active = true;
+    setLoading(true);
+    setError(false);
+    Promise.all([getCourse(id), getLectures(id)]).then(([course, lectures]) => {
+      if (active) setData({ course, lectures });
+    }).catch(() => { if (active) setError(true); })
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  // Retry intentionally creates a new focused request even when the route is unchanged.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id, attempt]));
+
+  if (loading) return <Screen><EmptyState loading title="Opening your notebook" description="Gathering the ideas from this course." /></Screen>;
+  if (error) return <Screen><EmptyState title="This notebook didn’t open" description="We couldn’t load this course. Please try again." action="Try again" onPress={() => setAttempt(value => value + 1)} /></Screen>;
+  if (!data?.course) return <Screen><EmptyState title="This page is missing" description="It may have moved or is no longer available. Your workspace is a good place to start." action="Go home" onPress={() => router.replace('/')} /></Screen>;
+
+  return <Screen>
+    <StatusBadge label={data.course.code} />
+    <View style={{ gap: 12 }}>
+      <ThemedText type="title">{data.course.name}</ThemedText>
+      <ThemedText themeColor="textSecondary">{data.course.professor}</ThemedText>
+    </View>
+    <ThemedText themeColor="textSecondary">One course. A clearer picture. All your lecture ideas, together.</ThemedText>
+    <SectionHeader title="Lecture notebook" detail={`${data.lectures.length} lecture${data.lectures.length === 1 ? '' : 's'}`} />
+    {data.lectures.length ? data.lectures.map(lecture => <LectureCard key={lecture.id} lecture={lecture} />)
+      : <EmptyState title="Room for your next idea" description="No lectures in this course yet. Explore how capturing class material works." action="Explore capture" onPress={() => router.push('/capture')} />}
+    <AppButton title="Capture class material  +" onPress={() => router.push('/capture')} />
+  </Screen>;
+}
+import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
+import { useCallback, useState } from 'react';
+import { View } from 'react-native';
+import { EmptyState, StatusBadge, formatDate } from '@/components/ui/Editorial';
+import { LectureSections } from '@/components/LectureSections';
+import { StudyActions } from '@/components/StudyActions';
+import { ThemedText } from '@/components/themed-text';
+import { AppButton } from '@/components/ui/AppButton';
+import { Screen } from '@/components/ui/Screen';
+import { getCourse } from '@/services/courses';
+import { getLecture } from '@/services/lectures';
+import type { Course, Lecture } from '@/types';
+
+export default function LectureScreen() {
+  const { id } = useLocalSearchParams<{ id: string }>();
+  const [data, setData] = useState<{ lecture: Lecture; course: Course | null } | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
+  const [attempt, setAttempt] = useState(0);
+
+  useFocusEffect(useCallback(() => {
+    let active = true;
+    setLoading(true);
+    setError(false);
+    async function load() {
+      try {
+        const lecture = await getLecture(id);
+        const course = lecture ? await getCourse(lecture.courseId) : null;
+        if (active) setData(lecture ? { lecture, course } : null);
+      } catch { if (active) setError(true); }
+      finally { if (active) setLoading(false); }
+    }
+    void load();
+    return () => { active = false; };
+  // Retry intentionally creates a new focused request even when the route is unchanged.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id, attempt]));
+
+  if (loading) return <Screen><EmptyState loading title="Bringing your ideas together" description="Opening your organized lecture notes." /></Screen>;
+  if (error) return <Screen><EmptyState title="This notebook didn’t open" description="We couldn’t load this lecture. Please try again." action="Try again" onPress={() => setAttempt(value => value + 1)} /></Screen>;
+  if (!data) return <Screen><EmptyState title="This page is missing" description="It may have moved or is no longer available. Your workspace is a good place to start." action="Go home" onPress={() => router.replace('/')} /></Screen>;
+
+  const { lecture, course } = data;
+  return <Screen>
+    <StatusBadge label="LECTURE NOTEBOOK" />
+    <View style={{ gap: 16 }}>
+      <ThemedText type="title">{lecture.title}</ThemedText>
+      <ThemedText themeColor="textSecondary">{course ? `${course.code} · ${course.name}` : 'Course unavailable'}</ThemedText>
+      <ThemedText type="small" themeColor="textSecondary">{course ? `${course.professor} · ` : ''}{formatDate(lecture.createdAt)}</ThemedText>
+    </View>
+    <LectureSections lecture={lecture} />
+    <StudyActions key={lecture.id} />
+    {course ? <AppButton secondary title={`Back to ${course.code}`} onPress={() => router.replace({ pathname: '/course/[id]', params: { id: course.id } })} /> : null}
+  </Screen>;
+}
+import { Pressable, StyleSheet, Text } from 'react-native';
+import { Brand, Fonts } from '@/constants/theme';
+import { useTheme } from '@/hooks/use-theme';
+
+interface Props {
+  title: string;
+  onPress: () => void;
+  disabled?: boolean;
+  secondary?: boolean;
+  accessibilityHint?: string;
+}
+
+export function AppButton({ title, onPress, disabled = false, secondary = false, accessibilityHint }: Props) {
+  const theme = useTheme();
+  const dark = theme.background !== Brand.paper;
+  const backgroundColor = secondary ? theme.backgroundSelected : dark ? Brand.lime : Brand.forest;
+  const color = secondary ? theme.text : dark ? Brand.ink : '#FFFFFF';
+  return (
+    <Pressable accessibilityRole="button" accessibilityLabel={title} accessibilityHint={accessibilityHint} accessibilityState={{ disabled }} disabled={disabled}
+      onPress={onPress} style={({ pressed }) => [styles.button, { backgroundColor }, (pressed || disabled) && styles.dim]}>
+      <Text style={[styles.label, { color }]}>{title}</Text>
+    </Pressable>
+  );
+}
+
+const styles = StyleSheet.create({
+  button: { backgroundColor: Brand.forest, padding: 16, borderRadius: 16, minHeight: 56, justifyContent: 'center', alignItems: 'center' },
+  dim: { opacity: 0.6 },
+  label: { fontFamily: Fonts.sans, fontSize: 16, lineHeight: 24, fontWeight: '600', textAlign: 'center', flexShrink: 1 },
+});
+import type { PropsWithChildren, ReactNode } from 'react';
+import { ScrollView, StyleSheet, View } from 'react-native';
+import { MaxContentWidth } from '@/constants/theme';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { useTheme } from '@/hooks/use-theme';
+
+export function Screen({ children, footer }: PropsWithChildren<{ footer?: ReactNode }>) {
+  const theme = useTheme();
+  return (
+    <SafeAreaView edges={['left', 'right', 'bottom']} style={[styles.safe, { backgroundColor: theme.background }]}>
+      <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled" contentContainerStyle={styles.content}>{children}</ScrollView>
+      {footer ? <View style={[styles.footer, { backgroundColor: theme.background }]}>{footer}</View> : null}
+    </SafeAreaView>
+  );
+}
+
+const styles = StyleSheet.create({
+  safe: { flex: 1 },
+  content: { padding: 24, paddingBottom: 40, gap: 24, width: '100%', maxWidth: MaxContentWidth, alignSelf: 'center', flexGrow: 1 },
+  footer: { paddingHorizontal: 24, paddingVertical: 12, width: '100%', maxWidth: MaxContentWidth, alignSelf: 'center' },
+});
+import { ActivityIndicator, StyleSheet, View } from 'react-native';
+import { ThemedText } from '@/components/themed-text';
+import { useTheme } from '@/hooks/use-theme';
+import { AppButton } from './AppButton';
+
+export function SectionHeader({ title, detail }: { title: string; detail?: string }) {
+  return <View style={styles.heading}>
+    <ThemedText accessibilityRole="header" style={styles.title}>{title}</ThemedText>
+    {detail ? <ThemedText type="small" themeColor="textSecondary">{detail}</ThemedText> : null}
+  </View>;
+}
+
+export function StatusBadge({ label }: { label: string }) {
+  const theme = useTheme();
+  return <View style={[styles.badge, { backgroundColor: theme.backgroundSelected }]}>
+    <ThemedText type="small" style={styles.badgeText}>{label}</ThemedText>
+  </View>;
+}
+
+export function EmptyState({ title, description, loading, action, onPress }: {
+  title: string; description: string; loading?: boolean; action?: string; onPress?: () => void;
+}) {
+  const theme = useTheme();
+  return <View accessibilityState={{ busy: !!loading }} style={[styles.empty, { backgroundColor: theme.backgroundElement }]}>
+    {loading ? <ActivityIndicator color={theme.text} accessibilityLabel={title} /> : <ThemedText accessible={false} importantForAccessibility="no" style={styles.mark}>⌑</ThemedText>}
+    <ThemedText accessibilityRole="header" style={styles.title}>{title}</ThemedText>
+    <ThemedText themeColor="textSecondary" style={styles.center}>{description}</ThemedText>
+    {action && onPress ? <AppButton title={action} onPress={onPress} /> : null}
+  </View>;
+}
+
+export function formatDate(value: string) {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? 'Date unavailable' : date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+}
+
+const styles = StyleSheet.create({
+  heading: { flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' },
+  title: { fontSize: 22, lineHeight: 28, fontWeight: '600', flexShrink: 1 },
+  badge: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 12, alignSelf: 'flex-start', maxWidth: '100%' },
+  badgeText: { fontSize: 12, lineHeight: 16, fontWeight: '600' },
+  empty: { padding: 24, borderRadius: 24, gap: 16 },
+  mark: { fontSize: 32, lineHeight: 40 },
+  center: { lineHeight: 24 },
+});
+import { Link } from 'expo-router';
+import { Pressable, StyleSheet, View } from 'react-native';
+import { AppCard } from '@/components/ui/AppCard';
+import { StatusBadge } from '@/components/ui/Editorial';
+import { ThemedText } from '@/components/themed-text';
+import type { Course } from '@/types';
+
+export function CourseCard({ course }: { course: Course }) {
+  return <Link href={{ pathname: '/course/[id]', params: { id: course.id } }} asChild>
+    <Pressable accessibilityRole="link" accessibilityLabel={`${course.code}, ${course.name}`} style={({ pressed }) => ({ opacity: pressed ? 0.7 : 1, transform: [{ scale: pressed ? 0.985 : 1 }] })}>
+      <AppCard>
+        <View style={styles.row}><StatusBadge label={course.code} /><ThemedText themeColor="textSecondary">↗</ThemedText></View>
+        <ThemedText style={styles.title}>{course.name}</ThemedText>
+        <ThemedText type="small" themeColor="textSecondary">{course.professor}</ThemedText>
+        <ThemedText type="smallBold">Open notebook  →</ThemedText>
+      </AppCard>
+    </Pressable>
+  </Link>;
+}
+const styles = StyleSheet.create({ row: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 16 }, title: { fontSize: 26, lineHeight: 32, fontWeight: '500', letterSpacing: -0.5 } });
+import { Link } from 'expo-router';
+import { Pressable, StyleSheet, View } from 'react-native';
+import { AppCard } from '@/components/ui/AppCard';
+import { StatusBadge, formatDate } from '@/components/ui/Editorial';
+import { ThemedText } from '@/components/themed-text';
+import type { Lecture } from '@/types';
+
+export function LectureCard({ lecture }: { lecture: Lecture }) {
+  return <Link href={{ pathname: '/lecture/[id]', params: { id: lecture.id } }} asChild>
+    <Pressable accessibilityRole="link" accessibilityLabel={`Read ${lecture.title}`} style={({ pressed }) => ({ opacity: pressed ? 0.7 : 1 })}>
+      <AppCard>
+        <View style={styles.row}><ThemedText type="small" themeColor="textSecondary">{formatDate(lecture.createdAt)}</ThemedText><ThemedText>↗</ThemedText></View>
+        <ThemedText style={styles.title}>{lecture.title}</ThemedText>
+        <ThemedText themeColor="textSecondary" numberOfLines={2}>{lecture.summary || 'Open this lecture to explore your notes.'}</ThemedText>
+        <View style={styles.tags}>
+          <StatusBadge label={`${lecture.keyConcepts.length} concepts`} />
+          {lecture.assignments.length > 0 ? <StatusBadge label={`${lecture.assignments.length} assignment${lecture.assignments.length === 1 ? '' : 's'}`} /> : null}
+          {lecture.examMentions.length > 0 ? <StatusBadge label="Exam mentioned" /> : null}
+        </View>
+      </AppCard>
+    </Pressable>
+  </Link>;
+}
+const styles = StyleSheet.create({ row: { flexDirection: 'row', justifyContent: 'space-between', gap: 12 }, title: { fontSize: 22, lineHeight: 28, fontWeight: '600' }, tags: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 } });
+import { useEffect, useState } from 'react';
+import { AccessibilityInfo, Animated, StyleSheet, View } from 'react-native';
+import { Brand } from '@/constants/theme';
+import { useTheme } from '@/hooks/use-theme';
+import { ThemedText } from '@/components/themed-text';
+
+export const processingSteps = ['Reading material', 'Detecting topic', 'Matching course', 'Finding key concepts', 'Building summary'];
+const descriptions = ['Making room for every detail.', 'Connecting the central ideas.', 'Finding where this knowledge belongs.', 'Separating the signal from the noise.', 'Putting it all into perspective.'];
+
+export function ProcessingCard({ step }: { step: number }) {
+  const theme = useTheme();
+  const [pulse] = useState(() => new Animated.Value(1));
+  const complete = step >= processingSteps.length;
+  useEffect(() => {
+    let mounted = true;
+    let animation: Animated.CompositeAnimation | undefined;
+    const update = (reduced: boolean) => {
+      animation?.stop();
+      pulse.setValue(1);
+      if (!reduced && mounted && !complete) {
+        animation = Animated.loop(Animated.sequence([
+          Animated.timing(pulse, { toValue: 0.55, duration: 800, useNativeDriver: true }),
+          Animated.timing(pulse, { toValue: 1, duration: 800, useNativeDriver: true }),
+        ]));
+        animation.start();
+      }
+    };
+    void AccessibilityInfo.isReduceMotionEnabled().then(value => { if (mounted) update(value); }).catch(() => {});
+    const subscription = AccessibilityInfo.addEventListener('reduceMotionChanged', update);
+    return () => { mounted = false; animation?.stop(); subscription.remove(); };
+  }, [pulse, complete]);
+  const percent = Math.round(Math.min(step, processingSteps.length) / processingSteps.length * 100);
+  return <>
+    <View style={styles.hero}>
+      <View accessible={false} importantForAccessibility="no-hide-descendants" style={styles.orbit}><View style={styles.innerOrbit}><Animated.View style={[styles.lens, { opacity: pulse }]}><ThemedText allowFontScaling={false} style={styles.star}>✦</ThemedText></Animated.View></View></View>
+      <ThemedText style={styles.kicker}>CLASSROOM → CLARITY</ThemedText>
+      <ThemedText style={styles.heroTitle} accessibilityLiveRegion="polite">{complete ? 'A clearer picture.' : processingSteps[step]}</ThemedText>
+      <ThemedText style={styles.description}>{complete ? 'Your sample notebook is ready to explore.' : descriptions[step]}</ThemedText>
+      <View style={styles.track} accessibilityRole="progressbar" accessibilityValue={{ min: 0, max: 100, now: percent }} accessibilityLabel="Demo progress"><View style={[styles.fill, { width: `${percent}%` }]} /></View>
+      <ThemedText style={styles.progressLabel}>{complete ? 'COMPLETE' : `STEP ${step + 1} OF ${processingSteps.length}`}  ·  DEMO PREVIEW</ThemedText>
+    </View>
+    <View style={styles.steps}>{processingSteps.map((label, index) => {
+      const done = index < step;
+      const active = index === step;
+      return <View key={label} accessible accessibilityLabel={`${label}. ${done ? 'Complete' : active ? 'In progress' : 'Up next'}`} style={[styles.step, { backgroundColor: active ? theme.backgroundSelected : theme.backgroundElement }]}>
+        <View style={[styles.number, { backgroundColor: done || active ? Brand.forest : theme.backgroundSelected }]}><ThemedText style={{ color: done || active ? '#FFFFFF' : theme.text, fontSize: 12 }}>{done ? '✓' : String(index + 1).padStart(2, '0')}</ThemedText></View>
+        <View style={styles.stepText}><ThemedText style={{ fontWeight: active ? '600' : '400' }}>{label}</ThemedText><ThemedText type="small" themeColor="textSecondary">{done ? 'Complete' : active ? 'In progress' : 'Up next'}</ThemedText></View>
+      </View>;
+    })}</View>
+  </>;
+}
+const styles = StyleSheet.create({
+  hero: { backgroundColor: Brand.forest, borderRadius: 24, padding: 24, alignItems: 'center', gap: 16 },
+  orbit: { width: 160, height: 160, borderWidth: 1, borderColor: '#63806B', borderRadius: 80, alignItems: 'center', justifyContent: 'center', marginVertical: 8 },
+  innerOrbit: { width: 120, height: 120, borderWidth: 1, borderColor: '#7D9A72', borderRadius: 60, alignItems: 'center', justifyContent: 'center' },
+  lens: { width: 80, height: 80, borderRadius: 24, backgroundColor: Brand.lime, alignItems: 'center', justifyContent: 'center' },
+  star: { color: Brand.ink, fontSize: 40, lineHeight: 48 },
+  kicker: { color: Brand.lime, fontSize: 12, letterSpacing: 1, textAlign: 'center' },
+  heroTitle: { color: '#FFFFFF', fontSize: 26, lineHeight: 32, textAlign: 'center', fontWeight: '500' },
+  description: { color: '#D5E0D2', textAlign: 'center', fontSize: 14, lineHeight: 24 },
+  track: { height: 4, backgroundColor: '#58745D', width: '100%', borderRadius: 4, overflow: 'hidden', marginTop: 8 },
+  fill: { height: 4, backgroundColor: Brand.lime },
+  progressLabel: { color: '#D5E0D2', fontSize: 12, letterSpacing: 1, textAlign: 'center' },
+  steps: { gap: 8 }, step: { padding: 16, flexDirection: 'row', gap: 16, alignItems: 'center', borderRadius: 16 },
+  number: { minWidth: 32, minHeight: 32, padding: 4, borderRadius: 12, alignItems: 'center', justifyContent: 'center' }, stepText: { flex: 1, gap: 4 },
+});
+import { StyleSheet, Text, View } from 'react-native';
+import { Brand } from '@/constants/theme';
+
+/** Decorative diagram built with native views; it never represents an uploaded file. */
+export function ScanArtwork({ compact = false }: { compact?: boolean }) {
+  return <View accessible={false} importantForAccessibility="no-hide-descendants" style={[styles.stage, compact && styles.compact]}>
+    <View style={[styles.sheet, styles.behind]} />
+    <View style={styles.sheet}>
+      <Text allowFontScaling={false} style={styles.eyebrow}>A MOMENT FROM CLASS</Text>
+      <Text allowFontScaling={false} style={styles.title}>Ideas, connected.</Text>
+      <View style={styles.line} /><View style={[styles.line, { width: '65%' }]} />
+      <View style={styles.diagram}><View style={styles.node} /><View style={styles.connector} /><View style={styles.node} /><View style={styles.connector} /><View style={styles.node} /></View>
+      <View style={[styles.line, { width: '80%' }]} />
+    </View>
+    <View style={[styles.corner, styles.topLeft]} /><View style={[styles.corner, styles.topRight]} />
+    <View style={[styles.corner, styles.bottomLeft]} /><View style={[styles.corner, styles.bottomRight]} />
+    <View style={styles.result}><Text allowFontScaling={false} style={styles.resultText}>✦  From scattered to structured</Text></View>
+  </View>;
+}
+
+const styles = StyleSheet.create({
+  stage: { height: 280, width: '100%', alignItems: 'center', justifyContent: 'center' },
+  compact: { height: 240 },
+  sheet: { width: '84%', maxWidth: 280, padding: 16, gap: 12, borderRadius: 12, backgroundColor: Brand.paper, transform: [{ rotate: '-4deg' }] },
+  behind: { position: 'absolute', height: 180, backgroundColor: '#7C9A80', transform: [{ rotate: '6deg' }] },
+  eyebrow: { color: '#627264', fontSize: 9, letterSpacing: 1, fontWeight: '600' },
+  title: { color: Brand.ink, fontSize: 16, lineHeight: 20, fontWeight: '600' },
+  line: { height: 4, width: '100%', borderRadius: 4, backgroundColor: '#D5DDCF' },
+  diagram: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: 4 },
+  node: { height: 24, width: 24, borderRadius: 8, borderWidth: 1, borderColor: '#789475', backgroundColor: '#E4ECD9' },
+  connector: { width: 16, height: 1, backgroundColor: '#789475' },
+  corner: { position: 'absolute', width: 24, height: 24, borderColor: Brand.lime },
+  topLeft: { left: 8, top: 16, borderTopWidth: 2, borderLeftWidth: 2, borderTopLeftRadius: 8 },
+  topRight: { right: 8, top: 16, borderTopWidth: 2, borderRightWidth: 2, borderTopRightRadius: 8 },
+  bottomLeft: { left: 8, bottom: 16, borderBottomWidth: 2, borderLeftWidth: 2, borderBottomLeftRadius: 8 },
+  bottomRight: { right: 8, bottom: 16, borderBottomWidth: 2, borderRightWidth: 2, borderBottomRightRadius: 8 },
+  result: { position: 'absolute', bottom: 16, backgroundColor: Brand.lime, padding: 12, borderRadius: 12 },
+  resultText: { fontSize: 11, fontWeight: '600', color: Brand.ink },
+});
+import { useState } from 'react';
+import { StyleSheet, View } from 'react-native';
+import { Brand } from '@/constants/theme';
+import { ThemedText } from './themed-text';
+import { AppButton } from './ui/AppButton';
+
+export function StudyActions() {
+  const [notice, setNotice] = useState('');
+  return <View style={styles.panel}>
+    <ThemedText style={styles.label}>✦  GO FROM KNOWING TO UNDERSTANDING</ThemedText>
+    <ThemedText style={styles.title}>Make it click.</ThemedText>
+    <ThemedText style={styles.body}>Ask the question you didn’t get to ask. Put your understanding to the test.</ThemedText>
+    <AppButton title="Ask This Lecture  ↗" secondary onPress={() => setNotice('Coming soon: you’ll be able to ask questions grounded in this lecture. This preview does not send a question.')} />
+    <AppButton title="Generate Quiz  →" secondary onPress={() => setNotice('Coming soon: practice with questions from this lecture. No quiz is generated in this preview.')} />
+    <ThemedText style={styles.caption}>Study tools preview · Coming soon</ThemedText>
+    {notice ? <ThemedText accessibilityLiveRegion="polite" style={styles.body}>{notice}</ThemedText> : null}
+  </View>;
+}
+const styles = StyleSheet.create({ panel: { borderRadius: 24, padding: 24, backgroundColor: Brand.forest, gap: 16 }, label: { color: Brand.lime, fontSize: 10, lineHeight: 16, letterSpacing: 1 }, title: { color: '#FFFFFF', fontSize: 32, lineHeight: 40, fontWeight: '500' }, body: { color: '#DCE7DA', fontWeight: '400' }, caption: { color: '#DCE7DA', fontSize: 12, lineHeight: 16 } });
+/** ClassLens paper-and-ink palette with native and web system font fallbacks. */
+
+import { Platform } from 'react-native';
+
+export const Colors = {
+  light: {
+    text: '#192D27',
+    background: '#F6F5EF',
+    backgroundElement: '#FFFFFF',
+    backgroundSelected: '#E7EDE3',
+    textSecondary: '#647068',
+  },
+  dark: {
+    text: '#EDF1E8',
+    background: '#111C18',
+    backgroundElement: '#1B2A23',
+    backgroundSelected: '#304236',
+    textSecondary: '#B1BDB2',
+  },
+} as const;
+
+export type ThemeColor = keyof typeof Colors.light & keyof typeof Colors.dark;
+
+export const Fonts = Platform.select({
+  ios: {
+    /** iOS `UIFontDescriptorSystemDesignDefault` */
+    sans: 'system-ui',
+    /** iOS `UIFontDescriptorSystemDesignSerif` */
+    serif: 'ui-serif',
+    /** iOS `UIFontDescriptorSystemDesignRounded` */
+    rounded: 'ui-rounded',
+    /** iOS `UIFontDescriptorSystemDesignMonospaced` */
+    mono: 'ui-monospace',
+  },
+  default: {
+    sans: 'normal',
+    serif: 'serif',
+    rounded: 'normal',
+    mono: 'monospace',
+  },
+  web: {
+    sans: 'system-ui, sans-serif',
+    serif: 'Georgia, serif',
+    rounded: 'system-ui, sans-serif',
+    mono: 'monospace',
+  },
+});
+
+export const Spacing = {
+  half: 2,
+  one: 4,
+  two: 8,
+  three: 16,
+  four: 24,
+  five: 32,
+  six: 64,
+} as const;
+
+export const BottomTabInset = Platform.select({ ios: 50, android: 80 }) ?? 0;
+export const MaxContentWidth = 640;
+
+export const Brand = { forest: '#234E3C', lime: '#D5EF92', paper: '#F6F5EF', ink: '#192D27', muted: '#B9CEBF' } as const;
+{
+  "name": "classlens",
+  "main": "expo-router/entry",
+  "version": "1.0.0",
+  "dependencies": {
+    "@expo/ui": "~57.0.18",
+    "expo": "~57.0.22",
+    "expo-constants": "~57.0.18",
+    "expo-device": "~57.0.2",
+    "expo-font": "~57.0.4",
+    "expo-glass-effect": "~57.0.3",
+    "expo-image": "~57.0.5",
+    "expo-image-picker": "~57.0.17",
+    "expo-linking": "~57.0.10",
+    "expo-router": "~57.0.21",
+    "expo-splash-screen": "~57.0.9",
+    "expo-status-bar": "~57.0.1",
+    "expo-symbols": "~57.0.3",
+    "expo-system-ui": "~57.0.4",
+    "expo-web-browser": "~57.0.3",
+    "react": "19.2.3",
+    "react-dom": "19.2.3",
+    "react-native": "0.86.3",
+    "react-native-gesture-handler": "~2.32.0",
+    "react-native-reanimated": "4.5.1",
+    "react-native-safe-area-context": "~5.7.0",
+    "react-native-screens": "~4.26.0",
+    "react-native-web": "~0.21.0",
+    "react-native-worklets": "0.10.1"
+  },
+  "devDependencies": {
+    "@types/react": "~19.2.2",
+    "typescript": "~6.0.3"
+  },
+  "scripts": {
+    "start": "expo start",
+    "android": "expo start --android",
+    "ios": "expo start --ios",
+    "web": "expo start --web",
+    "lint": "expo lint"
+  },
+  "private": true
+}
