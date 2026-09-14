@@ -1,0 +1,13 @@
+project_id = "classlens"
+
+[functions.analyze-material]
+verify_jwt = false
+entrypoint = "./functions/analyze-material/index.ts"
+
+[functions.ask-lecture]
+verify_jwt = false
+entrypoint = "./functions/ask-lecture/index.ts"
+
+[functions.generate-quiz]
+verify_jwt = false
+entrypoint = "./functions/generate-quiz/index.ts"
