@@ -56,7 +56,7 @@ insert into public.lectures (
 values (
   'demo-prashant-lecture',
   'cs-2325',
-  'Assembly Language',
+  'Computer Organization',
   'These study notes provide a comprehensive reference for x86 assembly language programming, including register usage, conditional jumps, bitwise operations, loop structures, and common instructions like MOV, DIV, IDIV, and INVOKE.',
   array['Conditional Jumps (jo, jc, jbe, jz, jnz, js, jns, jp, jnp)','Bitwise Operations (AND, OR, XOR, TEST)','Arithmetic Operations (ADD, SUB, MUL, IMUL, DIV, IDIV)','Register Usage (eax, ebx, ecx, edx, esi)','Looping Structures','Procedure Invocation (INVOKE, PROC, PROTO)']::text[],
   array['DIV divides edx:eax; requires edx to be cleared first.','TEST checks bits without changing the register values.','AND is used for clearing bits; OR is used for setting bits.','SF=1 indicates negative values (js), SF=0 indicates positive (jns).','Floating point/conditional jumps: FP maps to loopnz/jnz, FN maps to loopz/jz.']::text[],
