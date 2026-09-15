@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 
 import {
   ActivityIndicator,
@@ -14,12 +14,13 @@ import {
 
 import { ThemedText } from '@/components/themed-text';
 import { Brand, Fonts } from '@/constants/theme';
+import { useTheme } from '@/hooks/use-theme';
 
 import { createCourse } from '@/services/courses';
 import type { Course } from '@/types';
 
-/** Shortcuts only: tapping one prefills the form, it never creates a course. */
-const recommended: { code: string; name: string }[] = [
+/** Suggestions only: picking one fills the form, it never creates a course. */
+const suggestions: { code: string; name: string }[] = [
   { code: 'CS 3358', name: 'Data Structures & Algorithms' },
   { code: 'CS 2325', name: 'Computer Organization' },
   { code: 'MATH 3398', name: 'Discrete Mathematics II' },
@@ -27,6 +28,12 @@ const recommended: { code: string; name: string }[] = [
   { code: 'ENG 1310', name: 'College Writing I' },
   { code: 'ENG 1320', name: 'College Writing II' },
 ];
+
+function normalize(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
+type Field = 'code' | 'name';
 
 type Props = {
   visible: boolean;
@@ -39,18 +46,44 @@ export function AddCourseSheet({
   onClose,
   onCreated,
 }: Props) {
+  const theme = useTheme();
+  const dark = theme.background !== Brand.paper;
+
   const [code, setCode] = useState('');
   const [name, setName] = useState('');
   const [professor, setProfessor] = useState('');
+  const [focused, setFocused] = useState<Field | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
   const ready = code.trim().length > 0 && name.trim().length > 0;
 
+  // Suggest only while typing in the field being matched, and stop once the
+  // pair already matches a suggestion exactly.
+  const matches = useMemo(() => {
+    if (!focused) return [];
+    const query = normalize(focused === 'code' ? code : name);
+    if (!query) return [];
+    const exact = suggestions.some(
+      (option) =>
+        normalize(option.code) === normalize(code) &&
+        normalize(option.name) === normalize(name)
+    );
+    if (exact) return [];
+    // Match the field being typed against its own attribute: matching a code
+    // against names surfaces nonsense (“CS” hits “statisti-cs”).
+    return suggestions
+      .filter((option) =>
+        normalize(focused === 'code' ? option.code : option.name).includes(query)
+      )
+      .slice(0, 4);
+  }, [focused, code, name]);
+
   function reset() {
     setCode('');
     setName('');
     setProfessor('');
+    setFocused(null);
     setSaving(false);
     setError('');
   }
@@ -87,6 +120,68 @@ export function AddCourseSheet({
     }
   }
 
+  const inputStyle = [
+    styles.input,
+    {
+      color: theme.text,
+      backgroundColor: theme.backgroundElement,
+      borderColor: theme.backgroundSelected,
+    },
+  ];
+
+  function SuggestionList({ field }: { field: Field }) {
+    if (focused !== field || matches.length === 0) return null;
+
+    return (
+      <View
+        style={[
+          styles.suggestions,
+          {
+            backgroundColor: theme.backgroundElement,
+            borderColor: theme.backgroundSelected,
+          },
+        ]}
+      >
+        {matches.map((option, index) => (
+          <Pressable
+            key={option.code}
+            accessibilityRole="button"
+            accessibilityLabel={`Use ${option.code}, ${option.name}`}
+            disabled={saving}
+            onPress={() => {
+              setCode(option.code);
+              setName(option.name);
+              setFocused(null);
+              setError('');
+            }}
+            style={({ pressed }) => [
+              styles.suggestion,
+              index > 0 && {
+                borderTopWidth: 1,
+                borderTopColor: theme.backgroundSelected,
+              },
+              pressed && {
+                backgroundColor: theme.backgroundSelected,
+              },
+            ]}
+          >
+            <ThemedText style={styles.suggestionCode}>
+              {option.code}
+            </ThemedText>
+
+            <ThemedText
+              type="small"
+              themeColor="textSecondary"
+              numberOfLines={1}
+            >
+              {option.name}
+            </ThemedText>
+          </Pressable>
+        ))}
+      </View>
+    );
+  }
+
   return (
     <Modal
       transparent
@@ -103,21 +198,32 @@ export function AddCourseSheet({
           behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         >
           <Pressable
-            style={styles.sheet}
+            style={[
+              styles.sheet,
+              { backgroundColor: theme.background },
+            ]}
             onPress={(event) => event.stopPropagation()}
           >
-            <View style={styles.handle} />
+            <View
+              style={[
+                styles.handle,
+                { backgroundColor: theme.backgroundSelected },
+              ]}
+            />
 
             <ScrollView
               keyboardShouldPersistTaps="handled"
               showsVerticalScrollIndicator={false}
               contentContainerStyle={styles.content}
             >
-              <ThemedText style={styles.eyebrow}>
+              <ThemedText
+                themeColor="textSecondary"
+                style={styles.eyebrow}
+              >
                 CLASSLENS COURSES
               </ThemedText>
 
-              <ThemedText style={styles.title}>
+              <ThemedText style={[styles.title, { color: theme.text }]}>
                 Add a course.
               </ThemedText>
 
@@ -126,107 +232,82 @@ export function AddCourseSheet({
                 style={styles.description}
               >
                 Everything you capture for this class will live here.
+                Start typing and ClassLens will suggest matching courses.
               </ThemedText>
 
               <View style={styles.field}>
-                <ThemedText style={styles.label}>
+                <ThemedText
+                  themeColor="textSecondary"
+                  style={styles.label}
+                >
                   COURSE CODE
                 </ThemedText>
 
                 <TextInput
                   value={code}
                   onChangeText={setCode}
+                  onFocus={() => setFocused('code')}
                   editable={!saving}
                   placeholder="CS 3358"
-                  placeholderTextColor="#8C968D"
+                  placeholderTextColor={theme.textSecondary}
                   autoCapitalize="characters"
+                  autoCorrect={false}
                   accessibilityLabel="Course code, required"
-                  style={styles.input}
+                  style={inputStyle}
                 />
+
+                <SuggestionList field="code" />
               </View>
 
               <View style={styles.field}>
-                <ThemedText style={styles.label}>
+                <ThemedText
+                  themeColor="textSecondary"
+                  style={styles.label}
+                >
                   COURSE NAME
                 </ThemedText>
 
                 <TextInput
                   value={name}
                   onChangeText={setName}
+                  onFocus={() => setFocused('name')}
                   editable={!saving}
                   placeholder="Data Structures & Algorithms"
-                  placeholderTextColor="#8C968D"
+                  placeholderTextColor={theme.textSecondary}
                   accessibilityLabel="Course name, required"
-                  style={styles.input}
+                  style={inputStyle}
                 />
+
+                <SuggestionList field="name" />
               </View>
 
               <View style={styles.field}>
-                <ThemedText style={styles.label}>
+                <ThemedText
+                  themeColor="textSecondary"
+                  style={styles.label}
+                >
                   PROFESSOR (OPTIONAL)
                 </ThemedText>
 
                 <TextInput
                   value={professor}
                   onChangeText={setProfessor}
+                  onFocus={() => setFocused(null)}
                   editable={!saving}
                   placeholder="Professor Seaman"
-                  placeholderTextColor="#8C968D"
+                  placeholderTextColor={theme.textSecondary}
                   accessibilityLabel="Professor, optional"
-                  style={styles.input}
+                  style={inputStyle}
                 />
-              </View>
-
-              <View style={styles.recommended}>
-                <ThemedText style={styles.label}>
-                  RECOMMENDED
-                </ThemedText>
-
-                <ThemedText
-                  type="small"
-                  themeColor="textSecondary"
-                >
-                  Tap one to fill the form. Nothing is saved until you add it.
-                </ThemedText>
-
-                <View style={styles.chips}>
-                  {recommended.map((option) => (
-                    <Pressable
-                      key={option.code}
-                      accessibilityRole="button"
-                      accessibilityLabel={`Use ${option.code}, ${option.name}`}
-                      accessibilityState={{ disabled: saving }}
-                      disabled={saving}
-                      onPress={() => {
-                        setCode(option.code);
-                        setName(option.name);
-                        setError('');
-                      }}
-                      style={({ pressed }) => [
-                        styles.chip,
-                        pressed && styles.chipPressed,
-                      ]}
-                    >
-                      <ThemedText style={styles.chipCode}>
-                        {option.code}
-                      </ThemedText>
-
-                      <ThemedText
-                        type="small"
-                        themeColor="textSecondary"
-                        numberOfLines={2}
-                      >
-                        {option.name}
-                      </ThemedText>
-                    </Pressable>
-                  ))}
-                </View>
               </View>
 
               {error ? (
                 <ThemedText
                   accessibilityLiveRegion="polite"
-                  style={styles.error}
+                  style={[
+                    styles.error,
+                    { color: dark ? '#E7A6A6' : '#8C3B3B' },
+                  ]}
                 >
                   {error}
                 </ThemedText>
@@ -239,14 +320,20 @@ export function AddCourseSheet({
                 disabled={!ready || saving}
                 onPress={submit}
                 style={({ pressed }) => [
-                  styles.submit,
-                  (pressed || !ready || saving) && styles.submitDim,
+                  styles.action,
+                  { backgroundColor: dark ? Brand.lime : Brand.forest },
+                  (pressed || !ready || saving) && styles.dim,
                 ]}
               >
                 {saving ? (
-                  <ActivityIndicator color="#FFFFFF" />
+                  <ActivityIndicator color={dark ? Brand.ink : '#FFFFFF'} />
                 ) : (
-                  <ThemedText style={styles.submitText}>
+                  <ThemedText
+                    style={[
+                      styles.actionText,
+                      { color: dark ? Brand.ink : '#FFFFFF' },
+                    ]}
+                  >
                     Add course
                   </ThemedText>
                 )}
@@ -259,11 +346,14 @@ export function AddCourseSheet({
                 disabled={saving}
                 onPress={close}
                 style={({ pressed }) => [
-                  styles.cancel,
-                  pressed && styles.pressed,
+                  styles.action,
+                  { backgroundColor: theme.backgroundSelected },
+                  pressed && styles.dim,
                 ]}
               >
-                <ThemedText style={styles.cancelText}>
+                <ThemedText
+                  style={[styles.actionText, { color: theme.text }]}
+                >
                   Cancel
                 </ThemedText>
               </Pressable>
@@ -284,7 +374,6 @@ const styles = StyleSheet.create({
 
   sheet: {
     maxHeight: '90%',
-    backgroundColor: '#F7F6F0',
     borderTopLeftRadius: 34,
     borderTopRightRadius: 34,
     paddingHorizontal: 20,
@@ -301,13 +390,11 @@ const styles = StyleSheet.create({
     width: 44,
     height: 5,
     borderRadius: 999,
-    backgroundColor: '#CDD4CD',
     alignSelf: 'center',
     marginBottom: 16,
   },
 
   eyebrow: {
-    color: '#708479',
     fontSize: 10,
     fontWeight: '800',
     letterSpacing: 1.5,
@@ -315,7 +402,6 @@ const styles = StyleSheet.create({
 
   title: {
     fontFamily: Fonts.serif,
-    color: Brand.ink,
     fontSize: 30,
     lineHeight: 36,
     letterSpacing: -1,
@@ -331,7 +417,6 @@ const styles = StyleSheet.create({
   },
 
   label: {
-    color: '#708479',
     fontSize: 10,
     fontWeight: '800',
     letterSpacing: 1.5,
@@ -344,84 +429,45 @@ const styles = StyleSheet.create({
     paddingVertical: 14,
     fontSize: 16,
     lineHeight: 23,
-    color: Brand.ink,
-    backgroundColor: '#FFFFFF',
     borderWidth: 1,
-    borderColor: '#E1E6DF',
   },
 
-  recommended: {
-    gap: 8,
-    paddingTop: 4,
-  },
-
-  chips: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 10,
-    paddingTop: 4,
-  },
-
-  chip: {
-    width: '48%',
-    minHeight: 76,
-    padding: 12,
-    borderRadius: 18,
-    backgroundColor: '#FFFFFF',
+  suggestions: {
+    borderRadius: 17,
     borderWidth: 1,
-    borderColor: '#E1E6DF',
+    overflow: 'hidden',
+  },
+
+  suggestion: {
+    minHeight: 54,
     justifyContent: 'center',
-    gap: 4,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    gap: 2,
   },
 
-  chipPressed: {
-    opacity: 0.82,
-    transform: [{ scale: 0.96 }],
-  },
-
-  chipCode: {
-    color: Brand.ink,
+  suggestionCode: {
     fontSize: 15,
     fontWeight: '700',
   },
 
   error: {
-    color: '#8C3B3B',
     fontSize: 14,
     lineHeight: 21,
   },
 
-  submit: {
+  action: {
     minHeight: 54,
     borderRadius: 17,
-    backgroundColor: Brand.forest,
     alignItems: 'center',
     justifyContent: 'center',
   },
 
-  submitDim: {
-    opacity: 0.55,
-  },
-
-  submitText: {
-    color: '#FFFFFF',
+  actionText: {
     fontWeight: '700',
   },
 
-  cancel: {
-    minHeight: 54,
-    borderRadius: 17,
-    backgroundColor: '#E8EDE7',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-
-  cancelText: {
-    color: Brand.ink,
-    fontWeight: '700',
-  },
-
-  pressed: {
-    opacity: 0.55,
+  dim: {
+    opacity: 0.6,
   },
 });
