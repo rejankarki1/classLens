@@ -46,7 +46,7 @@ export default function LectureScreen() {
     <View style={{ gap: 16 }}>
       <ThemedText type="title">{lecture.title}</ThemedText>
       <ThemedText themeColor="textSecondary">{course ? `${course.code} · ${course.name}` : 'Course unavailable'}</ThemedText>
-      <ThemedText type="small" themeColor="textSecondary">{course ? `${course.professor} · ` : ''}{formatDate(lecture.createdAt)}</ThemedText>
+      <ThemedText type="small" themeColor="textSecondary">{course?.professor ? `${course.professor} · ` : ''}{formatDate(lecture.createdAt)}</ThemedText>
     </View>
     <LectureSections lecture={lecture} />
     <StudyActions key={lecture.id} lectureId={lecture.id} />

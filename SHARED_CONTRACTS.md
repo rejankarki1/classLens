@@ -66,6 +66,8 @@ export type Material = {
 
 export type CreateLectureInput = Omit<Lecture, 'id' | 'createdAt'>;
 
+export type CreateCourseInput = Omit<Course, 'id'>;
+
 export type MaterialUploadInput = {
   uri: string;
   type: Material['type'];
@@ -95,6 +97,7 @@ Dates are serialized strings; existing service records use ISO timestamps.
 ```ts
 getCourses(): Promise<Course[]>
 getCourse(id: string): Promise<Course | null>
+createCourse(input: CreateCourseInput): Promise<Course>
 getLectures(courseId: string): Promise<Lecture[]>
 getLecture(id: string): Promise<Lecture | null>
 createLecture(input: CreateLectureInput): Promise<Lecture>
@@ -110,6 +113,25 @@ Course reads live in `services/courses.ts`; lecture reads/creation in
 Missing individual records return null; empty collections return []. Failures
 reject and must be handled by the UI. createLecture validates the course and persists in Supabase mode; mock mode stores data in memory only. Quiz generation invokes generate-quiz; Ask Lecture invokes ask-lecture. Photo analysis invokes the deployed analyze-material Edge Function. Photo uploads
 require Supabase mode and the photo Storage migration. Screens must not import mock fixtures directly.
+
+### Course creation
+
+createCourse derives the ID by slugifying the code (`"CHEM 1301"` becomes
+`"chem-1301"`), so callers never supply one. Code and name are required and
+trimmed; professor may be empty because LectureAnalysis carries no professor
+field. The operation is idempotent: an existing course with the same derived ID
+is returned unchanged rather than raising a duplicate-key error, so retries are
+safe. Empty codes fall back to a generated UUID.
+
+The Step 20 migration grants anon INSERT of id/code/name/professor and requires
+nonempty code and name. UPDATE and DELETE remain unavailable, so demo data must
+be removed with the service role. Existing courses are never modified.
+
+Course creation is confirmed by the student in the capture flow. Analysis never
+creates a course: `suggestedCourse` is a free-text label used only to prefill the
+form, and an unmatched or ambiguous label prompts rather than inserting. This
+preserves the rule that Gemini must not silently create courses, while letting a
+clean database be usable. An empty course list is a normal first run, not an error.
 
 ## Staged material lifecycle
 

@@ -1,6 +1,6 @@
 import { router, useLocalSearchParams } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
-import { View } from 'react-native';
+import { StyleSheet, TextInput, View } from 'react-native';
 import { ProcessingCard } from '@/components/ProcessingCard';
 import { ThemedText } from '@/components/themed-text';
 import { AppButton } from '@/components/ui/AppButton';
@@ -8,8 +8,9 @@ import { AppCard } from '@/components/ui/AppCard';
 import { EmptyState, StatusBadge } from '@/components/ui/Editorial';
 import { Screen } from '@/components/ui/Screen';
 import { matchCourse } from '@/features/courses/matchCourse';
+import { useTheme } from '@/hooks/use-theme';
 import { analyzeMaterial } from '@/services/ai';
-import { getCourses } from '@/services/courses';
+import { createCourse, getCourses } from '@/services/courses';
 import { createLecture } from '@/services/lectures';
 import { attachMaterialToLecture, uploadMaterial } from '@/services/materials';
 import type { Course, LectureAnalysis, Material } from '@/types';
@@ -32,10 +33,13 @@ export default function ProcessingScreen() {
     mimeType?: string;
     fileName?: string;
   }>();
+  const theme = useTheme();
   const [step, setStep] = useState(0);
   const [error, setError] = useState('');
   const [choices, setChoices] = useState<Course[] | null>(null);
   const [attempt, setAttempt] = useState(0);
+  const [form, setForm] = useState({ code: '', name: '', professor: '' });
+  const [creating, setCreating] = useState(false);
 
   // Completed stages are retained so a retry never repeats paid or partial work:
   // no second upload, no second analysis, and no duplicate lecture.
@@ -48,6 +52,8 @@ export default function ProcessingScreen() {
   // analysis while the first is still awaiting.
   const inFlight = useRef(false);
   const mounted = useRef(true);
+  // Prefill the new-course form once, so a retry never discards typed edits.
+  const prefilled = useRef(false);
 
   useEffect(() => {
     mounted.current = true;
@@ -83,11 +89,18 @@ export default function ProcessingScreen() {
         setStep(2);
         if (!course.current) {
           const courses = await getCourses();
-          if (!courses.length) {
-            throw new Error('No courses are available yet. Add a course before saving a lecture.');
-          }
           const matched = matchCourse(analysis.current.suggestedCourse, courses);
           if (!matched) {
+            // An empty course list is the normal clean start, not an error:
+            // offer creation instead of dead-ending the capture.
+            if (!prefilled.current) {
+              setForm({
+                code: analysis.current.suggestedCourse ?? '',
+                name: analysis.current.topic,
+                professor: '',
+              });
+              prefilled.current = true;
+            }
             setChoices(courses);
             return;
           }
@@ -138,6 +151,22 @@ export default function ProcessingScreen() {
     retry();
   }
 
+  async function createAndContinue() {
+    const code = form.code.trim();
+    const name = form.name.trim();
+    if (!code || !name || creating) return;
+    setCreating(true);
+    try {
+      // Confirmed by the student, never created straight from the analysis.
+      course.current = await createCourse({ code, name, professor: form.professor.trim() });
+      retry();
+    } catch (caught) {
+      setError(message(caught));
+    } finally {
+      setCreating(false);
+    }
+  }
+
   const cancel = <AppButton title="Cancel" secondary onPress={() => router.canGoBack() ? router.back() : router.replace('/')} />;
 
   if (error) {
@@ -158,23 +187,70 @@ export default function ProcessingScreen() {
       <ThemedText type="subtitle">Where does this belong?</ThemedText>
       <ThemedText themeColor="textSecondary">
         {analysis.current?.suggestedCourse
-          ? `We read this as “${analysis.current.suggestedCourse}”, which doesn’t match a course yet. Pick where it belongs.`
-          : 'We couldn’t tell which course this belongs to. Pick where it belongs.'}
+          ? `We read this as “${analysis.current.suggestedCourse}”, which doesn’t match a course yet. Save it as a new course, or file it under an existing one.`
+          : 'We couldn’t tell which course this belongs to. Name the course, or file it under an existing one.'}
       </ThemedText>
+
       <AppCard>
-        <StatusBadge label="CHOOSE A COURSE" />
-        {analysis.current ? <ThemedText style={{ fontSize: 24, lineHeight: 32, fontWeight: '500' }}>{analysis.current.title}</ThemedText> : null}
-        <View style={{ gap: 12 }}>
+        <StatusBadge label="NEW COURSE" />
+        {analysis.current ? <ThemedText style={styles.cardTitle}>{analysis.current.title}</ThemedText> : null}
+        <View style={styles.field}>
+          <ThemedText type="small" themeColor="textSecondary">COURSE CODE</ThemedText>
+          <TextInput
+            value={form.code}
+            onChangeText={(code) => setForm((current) => ({ ...current, code }))}
+            editable={!creating}
+            placeholder="CHEM 1301"
+            placeholderTextColor={theme.textSecondary}
+            accessibilityLabel="Course code"
+            style={[styles.input, { color: theme.text, borderColor: theme.backgroundSelected }]}
+          />
+        </View>
+        <View style={styles.field}>
+          <ThemedText type="small" themeColor="textSecondary">COURSE NAME</ThemedText>
+          <TextInput
+            value={form.name}
+            onChangeText={(name) => setForm((current) => ({ ...current, name }))}
+            editable={!creating}
+            placeholder="Acid-Base Titration"
+            placeholderTextColor={theme.textSecondary}
+            accessibilityLabel="Course name"
+            style={[styles.input, { color: theme.text, borderColor: theme.backgroundSelected }]}
+          />
+        </View>
+        <View style={styles.field}>
+          <ThemedText type="small" themeColor="textSecondary">PROFESSOR (OPTIONAL)</ThemedText>
+          <TextInput
+            value={form.professor}
+            onChangeText={(professor) => setForm((current) => ({ ...current, professor }))}
+            editable={!creating}
+            placeholder="Add it later if you like"
+            placeholderTextColor={theme.textSecondary}
+            accessibilityLabel="Professor, optional"
+            style={[styles.input, { color: theme.text, borderColor: theme.backgroundSelected }]}
+          />
+        </View>
+        <AppButton
+          title={creating ? 'Saving…' : 'Create course and save lecture  →'}
+          disabled={creating || !form.code.trim() || !form.name.trim()}
+          onPress={createAndContinue}
+        />
+      </AppCard>
+
+      {choices.length ? <>
+        <ThemedText type="small" themeColor="textSecondary" style={styles.divider}>OR FILE IT UNDER AN EXISTING COURSE</ThemedText>
+        <View style={styles.field}>
           {choices.map((option) => (
             <AppButton
               key={option.id}
               title={`${option.code} · ${option.name}`}
               secondary
+              disabled={creating}
               onPress={() => chooseCourse(option)}
             />
           ))}
         </View>
-      </AppCard>
+      </> : null}
     </Screen>;
   }
 
@@ -194,3 +270,10 @@ export default function ProcessingScreen() {
     />
   </Screen>;
 }
+
+const styles = StyleSheet.create({
+  cardTitle: { fontSize: 24, lineHeight: 32, fontWeight: '500' },
+  field: { gap: 8 },
+  input: { minHeight: 56, borderRadius: 16, borderWidth: 1, paddingHorizontal: 16, paddingVertical: 12, fontSize: 16, lineHeight: 24 },
+  divider: { letterSpacing: 1 },
+});
