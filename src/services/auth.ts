@@ -125,15 +125,42 @@ export async function saveMyProfile(input: ProfileInput): Promise<Profile> {
   const { supabase } = await import('@/lib/supabase');
   const id = await profileOwnerId();
 
-  const { data, error } = await supabase
+  // Not upsert: PostgREST turns it into ON CONFLICT DO UPDATE over every column
+  // in the payload, including id, and id is deliberately not UPDATE-grantable.
+  // Update first, then insert when no row existed.
+  const updated = await supabase
     .from('profiles')
-    .upsert({ id, name, year: input.year, major })
+    .update({ name, year: input.year, major })
+    .eq('id', id)
+    .select(profileColumns)
+    .returns<Profile[]>()
+    .maybeSingle();
+
+  if (updated.error) throw new Error(`Could not save your profile: ${updated.error.message}`);
+  if (updated.data) {
+    profileListeners.forEach((listener) => listener());
+    return updated.data;
+  }
+
+  const inserted = await supabase
+    .from('profiles')
+    .insert({ id, name, year: input.year, major })
     .select(profileColumns)
     .returns<Profile[]>()
     .single();
 
-  if (error) throw new Error(`Could not save your profile: ${error.message}`);
-  if (!data) throw new Error('No saved profile was returned.');
+  if (inserted.error) {
+    // A concurrent first save won the insert; read back what it stored.
+    if (inserted.error.code === '23505') {
+      const existing = await getMyProfile();
+      if (existing) {
+        profileListeners.forEach((listener) => listener());
+        return existing;
+      }
+    }
+    throw new Error(`Could not save your profile: ${inserted.error.message}`);
+  }
+  if (!inserted.data) throw new Error('No saved profile was returned.');
   profileListeners.forEach((listener) => listener());
-  return data;
+  return inserted.data;
 }
