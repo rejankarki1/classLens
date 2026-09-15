@@ -1,134 +1,346 @@
-# ClassLens 📸📚
+# 📸 ClassLens
 
-> **Your camera roll shouldn't be your notebook. ClassLens turns what you capture in class into one.**
+### Your camera roll shouldn't be your notebook. ClassLens turns what you capture in class into one.
 
-ClassLens is an AI-powered mobile study companion built for **TXST Shipathon 2026** at Texas State University. It turns photos of classroom materials into organized lecture notebooks, with study tools grounded in the saved notes and original photos.
+**ClassLens** is an AI-powered mobile study companion that transforms photos of classroom material into organized, interactive lecture notebooks.
 
-**Capture class. Keep the knowledge.**
+Built for **TXST Shipathon 2026** at **Texas State University**.
 
-## The Problem
+**Photo & Video × Education**
 
-Students take photos of whiteboards, slides, worksheets, and handwritten notes throughout class. Those photos get buried in camera rolls, separated from their course, topic, and context. Finding a picture later is only the first step—students still need to work out what matters and how to study it.
+---
 
-ClassLens brings capture, organization, and studying into one flow.
+## 🎯 The Problem
 
-## How It Works
+Students take photos of everything in class:
+
+- Whiteboards
+- Lecture slides
+- Handwritten notes
+- Worksheets
+- Examples
+- Assignment instructions
+
+But those photos usually disappear into the camera roll.
+
+Days later, students have to figure out:
+
+- Which class was this?
+- What topic was being discussed?
+- What was actually important?
+- Was an assignment mentioned?
+- Is this going to be on the exam?
+
+And if you miss class entirely, getting useful notes from someone else creates another problem.
+
+**ClassLens was built to solve both.**
+
+---
+
+## 💡 The Idea
+
+### Don't organize your class material. Just capture it.
+
+Instead of:
 
 ```text
-Capture classroom material
+Take Photo
     ↓
-Upload the original photo
+Camera Roll
     ↓
-Gemini multimodal analysis
+Hundreds of Other Photos
     ↓
-Recognize course and topic
-    ↓
-Create an organized lecture notebook
-    ↓
-View the preserved original material
-    ↓
-Ask This Lecture · Generate Quiz
+Forgotten
 ```
 
-**ClassLens does not replace or rewrite the student's original material.** The original uploaded photo remains attached to the lecture as the source of truth. AI adds organization and study tools around it.
+ClassLens turns the process into:
 
-Course suggestions are matched against saved courses. When a suggestion cannot be resolved, students choose a course or confirm creation of a new one. AI does not silently create courses.
+```text
+Capture
+    ↓
+AI Analysis
+    ↓
+Course + Topic Recognition
+    ↓
+Organized Lecture
+    ↓
+Study
+```
 
-## ✨ Implemented Features
+The original classroom material always remains available.
 
-### 📸 Photo Lecture Capture
+**AI does not replace your notes — it builds a study layer around them.**
 
-Take a photo or choose one from the device's photo library. ClassLens uploads the original to **Supabase Storage** and sends it through the analysis pipeline. The current capture flow supports photos.
+---
 
-### 🧠 Gemini Lecture Analysis
+# ✨ What ClassLens Does
 
-Gemini multimodal analysis produces:
+## 📸 Capture a Lecture
 
-- Suggested course and lecture topic
-- Lecture title and AI summary
-- Key concepts and important points
+Capture or upload a photo of classroom material directly from ClassLens.
+
+The original photo is uploaded and preserved as lecture material.
+
+```text
+Photo
+  ↓
+Supabase Storage
+  ↓
+Gemini Analysis
+  ↓
+Structured Lecture
+```
+
+---
+
+## 🧠 AI Lecture Analysis
+
+ClassLens uses **Google Gemini multimodal AI** to understand classroom material.
+
+From a lecture photo, ClassLens can organize:
+
+- Course
+- Lecture title
+- Topic
+- Summary
+- Key concepts
+- Important points
 - Assignment mentions
 - Exam mentions
 
-### 📚 Courses and Lecture Notebooks
+The result becomes a structured notebook instead of another forgotten image.
 
-Browse courses and their saved lectures. Automatic course/topic organization turns captured material into structured notebooks, with original material viewing alongside the organized study information.
+---
 
-### 💬 Ask This Lecture
+## 📚 Smart Course Organization
 
-Ask questions about a saved lecture, such as:
-
-- “What was the main idea of this lecture?”
-- “Explain this concept more simply.”
-- “Was anything mentioned about the exam?”
-
-Answers are grounded in the saved lecture fields and original photos. The assistant is instructed to say when information is absent from the lecture.
-
-### 📝 Generate Quiz
-
-Generate five multiple-choice questions from a saved lecture, with four options per question, answer feedback, explanations, and a final score. Retake the generated quiz to review the material.
-
-### 👤 Authentication and Profiles
-
-Sign up or sign in with Supabase Authentication, complete an academic profile, and find classmates by profile name. Friendship requests support the classmate-sharing experience.
-
-## 🤝 CatchUpMate
-
-Missing class shouldn't mean missing the lecture.
-
-A student who misses class can review a classmate's captured lecture, see the original material and AI-organized notes, and select **Add to My Notes** to copy the lecture into their own notebook.
-
-The copy retains the source course, saved study information, and copied photo materials. **The classmate's original lecture and photo remain unchanged.**
+Lectures are organized inside courses so students can find their material naturally.
 
 ```text
-Miss class
-    ↓
-Review a classmate's shared lecture
-    ↓
-View the original photo and organized notes
-    ↓
-Add to My Notes
-    ↓
-Continue studying in your own notebook
+Course
+│
+├── Lecture
+│   ├── Original Material
+│   ├── Summary
+│   ├── Key Concepts
+│   ├── Important Points
+│   ├── Assignments
+│   ├── Exam Mentions
+│   ├── Ask This Lecture
+│   └── Generate Quiz
+│
+└── Lecture
 ```
 
-### Prashant's Assembly Demo
+ClassLens can use the analyzed material to help determine where a lecture belongs.
 
-The hackathon demo features **Prashant Bhattarai** sharing real **Assembly / Computer Organization** lecture notes through CatchUpMate. It includes the real uploaded photo, course information, saved analysis, key concepts, important points, and Add to My Notes.
+---
 
-The original demo photo is retained at [`assets/demo/prashant-assembly-notes.jpeg`](assets/demo/prashant-assembly-notes.jpeg). The hosted demo also requires its uploaded Storage object and material record; running the SQL seed alone does not upload the photo.
+## 🖼️ Keep the Original
 
-## 🏗️ Tech Stack
+One of the main principles behind ClassLens is simple:
 
-| Layer | Technologies |
-| --- | --- |
-| Frontend | React Native, Expo SDK 57, Expo Router, TypeScript |
-| Backend | Supabase, PostgreSQL, Supabase Storage, Supabase Edge Functions, Supabase Authentication |
-| AI | Google Gemini multimodal analysis, lecture Q&A, quiz generation |
+> **The original material is the source of truth.**
 
-## Architecture
+ClassLens doesn't replace a professor's whiteboard, a slide, or the student's original notes with an AI-generated version.
+
+The original uploaded material stays attached to the lecture.
+
+AI-generated summaries and study tools are added **around it**.
+
+---
+
+# 💬 Ask This Lecture
+
+A lecture shouldn't become static after it is saved.
+
+ClassLens lets students ask questions about their lecture material.
+
+For example:
 
 ```text
-React Native
-    ↓
-Capture
-    ↓
-Supabase Storage
-    ↓
-Edge Function
-    ↓
-Gemini
-    ↓
-LectureAnalysis
-    ↓
-PostgreSQL
-    ↓
-Lecture Notebook
+"What was the main idea of this lecture?"
+
+"Explain this concept more simply."
+
+"What are the most important things I should remember?"
+
+"Was anything mentioned about the exam?"
 ```
 
-The mobile app calls async services for uploads, analysis, and persistence. Edge Functions handle Gemini requests. After analysis and course resolution, the app saves the lecture and attaches its original material. Ask This Lecture and Generate Quiz use saved lecture context on demand.
+The lecture becomes an interactive study resource rather than just a collection of notes.
 
-### Lecture Analysis Contract
+---
+
+# 📝 Generate Quiz
+
+ClassLens can generate a multiple-choice quiz from saved lecture content.
+
+Instead of searching for practice questions elsewhere, students can immediately test themselves on what they just learned.
+
+```text
+Lecture
+   ↓
+Generate Quiz
+   ↓
+5 Questions
+   ↓
+Test Understanding
+```
+
+---
+
+# 🤝 CatchUpMate
+
+### Missed class? Catch up from someone who didn't.
+
+ClassLens isn't only about organizing your own material.
+
+**CatchUpMate** helps students recover from missed lectures using notes captured by classmates.
+
+```text
+You Miss Class
+      ↓
+Classmate Captures Lecture
+      ↓
+ClassLens Organizes It
+      ↓
+CatchUpMate
+      ↓
+Review Shared Material
+      ↓
++ Add to My Notes
+      ↓
+Continue Studying
+```
+
+Students can review:
+
+- Who shared the lecture
+- Course information
+- Original classroom material
+- Lecture summary
+- Key concepts
+- Important points
+
+If the material is useful, the student can add the lecture to their own notes.
+
+The student's copy is separate, so the classmate's original lecture remains unchanged.
+
+---
+
+## 🧑🤝🧑 CatchUpMate Demo
+
+Our hackathon demo includes a realistic missed-class scenario.
+
+**Prashant Bhattarai** attended a **Computer Organization** lecture covering Assembly Language concepts.
+
+The original lecture photo was uploaded to ClassLens and analyzed.
+
+Through CatchUpMate, another student can:
+
+1. Discover Prashant's shared lecture
+2. See the actual uploaded Assembly notes
+3. Review the AI-organized lecture
+4. Read key concepts and important points
+5. Add the lecture to their own notes
+6. Continue studying from their own copy
+
+This demonstrates the core ClassLens idea:
+
+> **Knowledge captured by one student can help another student catch up.**
+
+---
+
+# 🚀 Core Flow
+
+```text
+             CLASSROOM
+                 │
+                 ▼
+         Capture Material
+                 │
+                 ▼
+        Supabase Storage
+                 │
+                 ▼
+        Gemini Multimodal
+                 │
+                 ▼
+         LectureAnalysis
+                 │
+                 ▼
+      Course Identification
+                 │
+                 ▼
+        Lecture Notebook
+          /           \
+         ▼             ▼
+  Ask Lecture     Generate Quiz
+```
+
+---
+
+# 🏗️ Architecture
+
+```text
+┌─────────────────────────┐
+│      React Native       │
+│        ClassLens        │
+└────────────┬────────────┘
+             │
+          Capture
+             │
+             ▼
+┌─────────────────────────┐
+│    Supabase Storage     │
+│    Original Material    │
+└────────────┬────────────┘
+             │
+             ▼
+┌─────────────────────────┐
+│ Supabase Edge Functions │
+└────────────┬────────────┘
+             │
+             ▼
+┌─────────────────────────┐
+│      Google Gemini      │
+│   Multimodal Analysis   │
+└────────────┬────────────┘
+             │
+             ▼
+┌─────────────────────────┐
+│     LectureAnalysis     │
+└────────────┬────────────┘
+             │
+             ▼
+┌─────────────────────────┐
+│  Supabase PostgreSQL    │
+│                         │
+│ Courses                 │
+│ Lectures                │
+│ Materials               │
+│ Profiles                │
+│ Friendships             │
+└────────────┬────────────┘
+             │
+             ▼
+┌─────────────────────────┐
+│    Lecture Notebook     │
+│                         │
+│ Summary                 │
+│ Concepts                │
+│ Original Material       │
+│ Ask                     │
+│ Quiz                    │
+└─────────────────────────┘
+```
+
+---
+
+# 🧩 Lecture Analysis Contract
+
+ClassLens keeps AI output structured using a shared TypeScript contract.
 
 ```ts
 type LectureAnalysis = {
@@ -143,119 +355,254 @@ type LectureAnalysis = {
 };
 ```
 
-This contract is validated at both the server and mobile service boundaries.
+This allows the mobile application, database, and AI pipeline to work with predictable lecture data.
 
-## 🚀 Running Locally
+---
 
-### 1. Clone the repository
+# 🛠️ Tech Stack
+
+## Mobile
+
+- **React Native**
+- **Expo SDK 57**
+- **Expo Router**
+- **TypeScript**
+
+## Backend
+
+- **Supabase**
+- **PostgreSQL**
+- **Supabase Storage**
+- **Supabase Edge Functions**
+- **Supabase Authentication**
+
+## Artificial Intelligence
+
+- **Google Gemini**
+- Multimodal image analysis
+- Lecture organization
+- Lecture Q&A
+- Quiz generation
+
+---
+
+# 🗄️ Data Model
+
+At a high level, ClassLens organizes information like this:
+
+```text
+User
+│
+├── Profile
+│
+├── Courses
+│    │
+│    └── Lectures
+│          │
+│          └── Materials
+│
+└── Friendships
+      │
+      └── Shared Lectures
+```
+
+A lecture contains the structured study information while materials preserve the original uploaded classroom content.
+
+---
+
+# 📱 Main Features
+
+| Feature | Description |
+|---|---|
+| 📸 Lecture Capture | Capture classroom material directly from the mobile app |
+| 🧠 AI Analysis | Analyze lecture photos with Gemini |
+| 📚 Courses | Organize lectures by course |
+| 📝 Lecture Notebook | Structured summaries, concepts and important points |
+| 🖼️ Original Material | Preserve and view the original uploaded photo |
+| 💬 Ask This Lecture | Ask AI questions about saved lecture content |
+| 🧪 Generate Quiz | Generate study questions from a lecture |
+| 🤝 CatchUpMate | Discover lecture material shared by classmates |
+| ➕ Add to My Notes | Copy useful shared lectures into your own notebook |
+| 👤 Profiles | Student profile and identity |
+| 🔐 Authentication | Account/session support through Supabase |
+
+---
+
+# ⚙️ Running ClassLens Locally
+
+## 1. Clone the repository
 
 ```bash
 git clone https://github.com/rejankarki1/classLens.git
 cd classLens
 ```
 
-### 2. Install dependencies
+## 2. Install dependencies
 
 ```bash
 npm install
 ```
 
-### 3. Configure the mobile environment
+## 3. Environment Configuration
 
-Create `.env.local` from the supplied template:
+Create:
 
-```bash
-cp .env.example .env.local
+```text
+.env.local
 ```
 
-Set the data mode to `supabase` and fill in your project's public configuration:
+Use the repository's `.env.example` as the starting template.
 
-```dotenv
+The mobile application requires its public Supabase configuration.
+
+Example structure:
+
+```env
 EXPO_PUBLIC_DATA_MODE=supabase
-EXPO_PUBLIC_SUPABASE_URL=https://YOUR_PROJECT.supabase.co
-EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY=YOUR_PUBLIC_PUBLISHABLE_KEY
+EXPO_PUBLIC_SUPABASE_URL=your_supabase_url
+EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY=your_publishable_key
 ```
 
-The template defaults to mock data; the current authentication, capture, and AI flows require Supabase mode. Restart Expo after changing environment variables.
+### Important
 
-Use a Supabase project configured with the repository's migrations, Storage bucket, and deployed `analyze-material`, `ask-lecture`, and `generate-quiz` Edge Functions. Creating `.env.local` does not provision the backend.
+Never place private credentials in the mobile environment.
 
-**Server-side AI secrets belong in Supabase Edge Function secrets.** Configure `GEMINI_API_KEY` and `CLASSLENS_DEMO_PUBLISHABLE_KEY` there; the latter must match the mobile app's public publishable key. The hosted runtime supplies `SUPABASE_URL`.
+Do **not** commit:
 
-Never put Gemini keys or Supabase private/service-role credentials in the mobile app, README, or Git history.
+- Gemini API keys
+- Supabase service-role keys
+- Private API credentials
+- `.env.local`
 
-Function setup and deployment details:
+Gemini credentials used by the AI backend should be configured as **server-side Supabase Edge Function secrets**.
 
-- [Photo analysis](supabase/functions/analyze-material/README.md)
-- [Ask This Lecture](supabase/functions/ask-lecture/README.md)
-- [Generate Quiz](supabase/functions/generate-quiz/README.md)
+---
 
-### 4. Start Expo
+## 4. Start ClassLens
 
 ```bash
 npx expo start
 ```
 
-For a device on the same local network:
+For a physical device on the same network:
 
 ```bash
 npx expo start --lan
 ```
 
-Open the project in an Expo Go version compatible with SDK 57 or an appropriate development build. Sign in or create an account, then complete your profile.
+Then open the project using Expo Go or an appropriate development build.
 
-### Verification
+---
+
+# 🔐 Security
+
+ClassLens was developed as a **hackathon prototype**.
+
+Authentication, profiles, friendships, database storage, and shared lecture functionality are implemented, but portions of the current access model are designed to support the hackathon demonstration environment.
+
+Before production deployment, the authorization and Row Level Security model should be hardened for complete per-user isolation and production-grade private sharing.
+
+---
+
+# 🧪 Project Verification
+
+The final hackathon build has been checked with:
 
 ```bash
 npx tsc --noEmit
 npx expo export
+git diff --check
 ```
 
-Offline AI checks run without cloud requests:
+The project successfully exports for:
 
-```bash
-node supabase/functions/analyze-material/check.cjs
-node supabase/functions/ask-lecture/check.cjs
-node supabase/functions/generate-quiz/check.cjs
-```
+- iOS
+- Android
+- Web
 
-## 🔐 Hackathon Prototype
-
-ClassLens is designed for a shared, non-sensitive classroom demo. Authentication and friendships are implemented, while some database access policies and AI endpoints deliberately retain shared-demo access. Production use will require stricter per-user permissions, AI authorization, and quota controls.
-
-## 🔮 Future Direction
-
-- Course-level AI Q&A
-- Course-level quizzes
-- Exam study guides across multiple lectures
-- Lecture search
-- Collaborative notebooks
-- Smarter course recognition
-- More classroom material formats
-- Production-grade permissions
-
-## 🏆 Built For
-
-**TXST Shipathon 2026** — Texas State University
-
-**📸 Photo & Video × 📚 Education**
-
-## 👨‍💻 Team
-
-**Rejan Karki**<br>
-Computer Science — Texas State University<br>
-GitHub: @rejankarki1
-
-**Prashant Bhattarai**<br>
-Texas State University<br>
-Email: rna54@txstate.edu
-
-**Gauridhi Pun**<br>
-Texas State University<br>
-Email: stc78@txstate.edu
+The AI analysis, lecture Q&A, and quiz pipelines also include offline validation checks.
 
 ---
 
-## ClassLens
+# 🌱 Future Direction
 
-**Capture class. Keep the knowledge.**
+ClassLens can grow beyond individual lecture organization into a complete course intelligence layer.
+
+Future ideas include:
+
+### 🧠 Ask an Entire Course
+
+Ask questions across multiple lectures instead of one lecture at a time.
+
+### 📝 Course-Level Quizzes
+
+Generate quizzes covering several weeks or an entire exam unit.
+
+### 🎓 AI Exam Study Guides
+
+Combine lectures into automatically generated exam review material.
+
+### 🔎 Lecture Search
+
+Search across captured lectures, concepts, assignments, and original material.
+
+### 🤝 Collaborative Class Notebooks
+
+Allow classmates to build shared course knowledge together.
+
+### 🧠 Smarter Course Recognition
+
+Improve automatic matching between captured material and existing courses.
+
+### 📄 More Material Types
+
+Expand capture beyond photos to additional classroom formats.
+
+### 🔒 Production-Grade Sharing
+
+Introduce stricter permissions and private sharing controls for larger-scale deployment.
+
+---
+
+# 🏆 Built for TXST Shipathon 2026
+
+**Texas State University**
+
+ClassLens combines:
+
+### 📸 Photo & Video
+×
+### 📚 Education
+
+Our goal was to rethink something students already do every day:
+
+**taking pictures in class.**
+
+Instead of asking students to adopt another complicated organization system, ClassLens starts with an existing habit and makes that habit useful.
+
+---
+
+# 👨‍💻 Team
+
+### Rejan Karki
+
+Computer Science — Texas State University  
+GitHub: `@rejankarki1`
+
+### Prashant Bhattarai
+
+Texas State University  
+Email: `rna54@txstate.edu`
+
+### Gauridhi Pun
+
+Texas State University  
+Email: `stc78@txstate.edu`
+
+---
+
+# 💚 ClassLens
+
+### Capture class. Keep the knowledge.
+
+**Don't organize your class material. Just capture it. ClassLens organizes it for you.**
