@@ -29,7 +29,7 @@ export function Screen({
 
   return (
     <SafeAreaView
-      edges={['left', 'right', 'bottom']}
+      edges={['top', 'left', 'right', 'bottom']}
       style={[
         styles.safe,
         {
@@ -71,8 +71,7 @@ const styles = StyleSheet.create({
     flex: 1,
   },
 
-  content: {
-    padding: 24,
+  content: { paddingHorizontal: 24, paddingTop: 18,
     paddingBottom: 40,
     gap: 24,
     width: '100%',
