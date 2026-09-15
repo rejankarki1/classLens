@@ -64,9 +64,17 @@ export default function RootLayout() {
         />
 
         <Stack.Screen
+          name="catchup"
+          options={{
+            title: 'CatchUp',
+            headerShown: false,
+          }}
+        />
+
+        <Stack.Screen
           name="library"
           options={{
-            title: 'Library',
+            title: 'CatchUp',
             headerShown: false,
           }}
         />
