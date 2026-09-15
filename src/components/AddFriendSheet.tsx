@@ -10,12 +10,16 @@ import {
   StyleSheet,
   TextInput,
   View,
+  useWindowDimensions,
 } from 'react-native';
 
-import { ThemedText } from '@/components/themed-text';
-import { Brand, Fonts } from '@/constants/theme';
-import { useTheme } from '@/hooks/use-theme';
+import { router } from 'expo-router';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { ThemedText } from '@/components/themed-text';
+import { Brand } from '@/constants/theme';
+
+import { getCurrentUserId } from '@/services/auth';
 import {
   acceptFriendRequest,
   getFriendshipStates,
@@ -37,9 +41,10 @@ type Props = {
 };
 
 export function AddFriendSheet({ visible, onClose, onChanged }: Props) {
-  const theme = useTheme();
-  const dark = theme.background !== Brand.paper;
+  const insets = useSafeAreaInsets();
+  const { height } = useWindowDimensions();
 
+  const [signedIn, setSignedIn] = useState<boolean | null>(null);
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<Profile[]>([]);
   const [states, setStates] = useState<Map<string, 'pending' | 'accepted'>>(new Map());
@@ -63,13 +68,28 @@ export function AddFriendSheet({ visible, onClose, onChanged }: Props) {
 
   useEffect(() => {
     if (!visible) return;
+    let active = true;
     setError('');
-    void refresh();
+    // Friendships are authenticated-only by design, so check before querying.
+    void getCurrentIn();
+
+    async function getCurrentIn() {
+      try {
+        const id = await getCurrentUserId();
+        if (!active) return;
+        setSignedIn(id !== null);
+        if (id) await refresh();
+      } catch {
+        if (active) setSignedIn(false);
+      }
+    }
+
+    return () => { active = false; };
   }, [visible, refresh]);
 
   // Debounced so typing does not fire a query per keystroke.
   useEffect(() => {
-    if (!visible) return;
+    if (!visible || !signedIn) return;
     const term = query.trim();
     if (term.length < 2) {
       setResults([]);
@@ -84,7 +104,7 @@ export function AddFriendSheet({ visible, onClose, onChanged }: Props) {
         .finally(() => { if (active) setSearching(false); });
     }, 300);
     return () => { active = false; clearTimeout(timer); };
-  }, [query, visible]);
+  }, [query, visible, signedIn]);
 
   function close() {
     if (working) return;
@@ -123,214 +143,269 @@ export function AddFriendSheet({ visible, onClose, onChanged }: Props) {
     }
   }
 
+  // An absolute number beats a percentage here: the sheet's parent is
+  // content-sized, so a percentage maxHeight resolves against nothing.
+  const sheetMax = Math.round(height * 0.75);
+
   return (
     <Modal
       transparent
       visible={visible}
       animationType="slide"
-      presentationStyle="overFullScreen"
+      statusBarTranslucent
       onRequestClose={close}
     >
-      <Pressable style={styles.backdrop} onPress={close}>
-        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-          <Pressable
-            style={[styles.sheet, { backgroundColor: theme.background }]}
-            onPress={(event) => event.stopPropagation()}
+      <View style={styles.root}>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Close"
+          style={StyleSheet.absoluteFill}
+          onPress={close}
+        />
+
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          style={styles.lift}
+        >
+          <View
+            style={[
+              styles.sheet,
+              { maxHeight: sheetMax, paddingBottom: insets.bottom + 16 },
+            ]}
           >
-            <View style={[styles.handle, { backgroundColor: theme.backgroundSelected }]} />
+            <View style={styles.handle} />
 
-            <ScrollView
-              keyboardShouldPersistTaps="handled"
-              showsVerticalScrollIndicator={false}
-              contentContainerStyle={styles.content}
-            >
-              <ThemedText themeColor="textSecondary" style={styles.eyebrow}>
-                CATCHUPMATE
-              </ThemedText>
-
-              <ThemedText style={[styles.title, { color: theme.text }]}>
-                Add a classmate.
-              </ThemedText>
-
-              <ThemedText themeColor="textSecondary" style={styles.description}>
-                Search by name. Once they accept, their shared lectures show up in Catch Up.
-              </ThemedText>
-
-              {requests.length ? (
-                <View style={styles.group}>
-                  <ThemedText themeColor="textSecondary" style={styles.label}>
-                    FRIEND REQUESTS
-                  </ThemedText>
-
-                  {requests.map((request) => (
-                    <View
-                      key={request.id}
-                      style={[styles.row, {
-                        backgroundColor: theme.backgroundElement,
-                        borderColor: theme.backgroundSelected,
-                      }]}
-                    >
-                      <View style={styles.rowCopy}>
-                        <ThemedText style={styles.rowName}>{request.from.name}</ThemedText>
-                        <ThemedText type="small" themeColor="textSecondary">
-                          {request.from.year} · {request.from.major}
-                        </ThemedText>
-                      </View>
-
-                      <Pressable
-                        accessibilityRole="button"
-                        accessibilityLabel={`Accept ${request.from.name}`}
-                        disabled={working !== null}
-                        onPress={() => accept(request)}
-                        style={({ pressed }) => [
-                          styles.rowAction,
-                          { backgroundColor: dark ? Brand.lime : Brand.forest },
-                          (pressed || working !== null) && styles.dim,
-                        ]}
-                      >
-                        {working === request.id
-                          ? <ActivityIndicator color={dark ? Brand.ink : '#FFFFFF'} />
-                          : <ThemedText style={[styles.rowActionText, { color: dark ? Brand.ink : '#FFFFFF' }]}>Accept</ThemedText>}
-                      </Pressable>
-                    </View>
-                  ))}
-                </View>
-              ) : null}
-
-              <View style={styles.group}>
-                <ThemedText themeColor="textSecondary" style={styles.label}>
-                  FIND A CLASSMATE
-                </ThemedText>
-
-                <TextInput
-                  value={query}
-                  onChangeText={setQuery}
-                  placeholder="Search by name"
-                  placeholderTextColor={theme.textSecondary}
-                  autoCapitalize="words"
-                  autoCorrect={false}
-                  accessibilityLabel="Search classmates by name"
-                  style={[styles.input, {
-                    color: theme.text,
-                    backgroundColor: theme.backgroundElement,
-                    borderColor: theme.backgroundSelected,
-                  }]}
-                />
-
-                {searching ? <ActivityIndicator color={theme.text} accessibilityLabel="Searching" /> : null}
-
-                {!searching && query.trim().length >= 2 && results.length === 0 ? (
-                  <ThemedText type="small" themeColor="textSecondary">
-                    No classmate found with that name.
-                  </ThemedText>
-                ) : null}
-
-                {results.map((profile) => {
-                  const state = states.get(profile.id);
-                  return (
-                    <View
-                      key={profile.id}
-                      style={[styles.row, {
-                        backgroundColor: theme.backgroundElement,
-                        borderColor: theme.backgroundSelected,
-                      }]}
-                    >
-                      <View style={styles.rowCopy}>
-                        <ThemedText style={styles.rowName}>{profile.name}</ThemedText>
-                        <ThemedText type="small" themeColor="textSecondary">
-                          {profile.year} · {profile.major}
-                        </ThemedText>
-                      </View>
-
-                      {state ? (
-                        <View style={[styles.badge, { backgroundColor: theme.backgroundSelected }]}>
-                          <ThemedText type="small" style={{ color: theme.text }}>
-                            {state === 'accepted' ? 'Friends' : 'Pending'}
-                          </ThemedText>
-                        </View>
-                      ) : (
-                        <Pressable
-                          accessibilityRole="button"
-                          accessibilityLabel={`Add ${profile.name}`}
-                          disabled={working !== null}
-                          onPress={() => add(profile)}
-                          style={({ pressed }) => [
-                            styles.rowAction,
-                            { backgroundColor: dark ? Brand.lime : Brand.forest },
-                            (pressed || working !== null) && styles.dim,
-                          ]}
-                        >
-                          {working === profile.id
-                            ? <ActivityIndicator color={dark ? Brand.ink : '#FFFFFF'} />
-                            : <ThemedText style={[styles.rowActionText, { color: dark ? Brand.ink : '#FFFFFF' }]}>Add</ThemedText>}
-                        </Pressable>
-                      )}
-                    </View>
-                  );
-                })}
+            <View style={styles.header}>
+              <View style={styles.headerCopy}>
+                <ThemedText style={styles.eyebrow}>CATCHUPMATE</ThemedText>
+                <ThemedText style={styles.title}>Add a classmate</ThemedText>
               </View>
-
-              {error ? (
-                <ThemedText
-                  accessibilityLiveRegion="polite"
-                  style={[styles.error, { color: dark ? '#E7A6A6' : '#8C3B3B' }]}
-                >
-                  {error}
-                </ThemedText>
-              ) : null}
 
               <Pressable
                 accessibilityRole="button"
-                accessibilityLabel="Done"
-                disabled={working !== null}
+                accessibilityLabel="Close"
+                hitSlop={10}
                 onPress={close}
-                style={({ pressed }) => [
-                  styles.action,
-                  { backgroundColor: theme.backgroundSelected },
-                  pressed && styles.dim,
-                ]}
+                style={({ pressed }) => [styles.close, pressed && styles.dim]}
               >
-                <ThemedText style={[styles.actionText, { color: theme.text }]}>Done</ThemedText>
+                <ThemedText allowFontScaling={false} style={styles.closeText}>×</ThemedText>
               </Pressable>
-            </ScrollView>
-          </Pressable>
+            </View>
+
+            {signedIn === null ? (
+              <View style={styles.centered}>
+                <ActivityIndicator color={Brand.lime} accessibilityLabel="Loading" />
+              </View>
+            ) : signedIn === false ? (
+              <View style={styles.signedOut}>
+                <ThemedText style={styles.body}>
+                  Sign in to add classmates. Catch Up shares notes between real
+                  accounts, so friends need you signed in.
+                </ThemedText>
+
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Sign in"
+                  onPress={() => { onClose(); router.push('/login'); }}
+                  style={({ pressed }) => [styles.primary, pressed && styles.dim]}
+                >
+                  <ThemedText style={styles.primaryText}>Sign in</ThemedText>
+                </Pressable>
+              </View>
+            ) : (
+              <>
+                <TextInput
+                  value={query}
+                  onChangeText={setQuery}
+                  placeholder="Search classmates by name"
+                  placeholderTextColor="#9FB3A3"
+                  autoCapitalize="words"
+                  autoCorrect={false}
+                  accessibilityLabel="Search classmates by name"
+                  style={styles.input}
+                />
+
+                <ScrollView
+                  style={styles.list}
+                  keyboardShouldPersistTaps="handled"
+                  showsVerticalScrollIndicator={false}
+                  contentContainerStyle={styles.listContent}
+                >
+                  {requests.length ? (
+                    <View style={styles.group}>
+                      <ThemedText style={styles.label}>FRIEND REQUESTS</ThemedText>
+
+                      {requests.map((request) => (
+                        <View key={request.id} style={styles.row}>
+                          <View style={styles.rowCopy}>
+                            <ThemedText style={styles.rowName}>{request.from.name}</ThemedText>
+                            <ThemedText style={styles.rowMeta}>
+                              {request.from.year} · {request.from.major}
+                            </ThemedText>
+                          </View>
+
+                          <Pressable
+                            accessibilityRole="button"
+                            accessibilityLabel={`Accept ${request.from.name}`}
+                            disabled={working !== null}
+                            onPress={() => accept(request)}
+                            style={({ pressed }) => [
+                              styles.action,
+                              (pressed || working !== null) && styles.dim,
+                            ]}
+                          >
+                            {working === request.id
+                              ? <ActivityIndicator color={Brand.ink} />
+                              : <ThemedText style={styles.actionText}>Accept</ThemedText>}
+                          </Pressable>
+                        </View>
+                      ))}
+                    </View>
+                  ) : null}
+
+                  {searching ? (
+                    <ActivityIndicator color={Brand.lime} accessibilityLabel="Searching" />
+                  ) : null}
+
+                  {!searching && query.trim().length >= 2 && results.length === 0 ? (
+                    <ThemedText style={styles.rowMeta}>
+                      No classmate found with that name.
+                    </ThemedText>
+                  ) : null}
+
+                  {!searching && query.trim().length < 2 && requests.length === 0 ? (
+                    <ThemedText style={styles.rowMeta}>
+                      Type at least two letters of a classmate&apos;s name to find them.
+                    </ThemedText>
+                  ) : null}
+
+                  {results.map((profile) => {
+                    const state = states.get(profile.id);
+                    return (
+                      <View key={profile.id} style={styles.row}>
+                        <View style={styles.rowCopy}>
+                          <ThemedText style={styles.rowName}>{profile.name}</ThemedText>
+                          <ThemedText style={styles.rowMeta}>
+                            {profile.year} · {profile.major}
+                          </ThemedText>
+                        </View>
+
+                        {state ? (
+                          <View style={styles.badge}>
+                            <ThemedText style={styles.badgeText}>
+                              {state === 'accepted' ? 'Friends' : 'Pending'}
+                            </ThemedText>
+                          </View>
+                        ) : (
+                          <Pressable
+                            accessibilityRole="button"
+                            accessibilityLabel={`Add ${profile.name}`}
+                            disabled={working !== null}
+                            onPress={() => add(profile)}
+                            style={({ pressed }) => [
+                              styles.action,
+                              (pressed || working !== null) && styles.dim,
+                            ]}
+                          >
+                            {working === profile.id
+                              ? <ActivityIndicator color={Brand.ink} />
+                              : <ThemedText style={styles.actionText}>Add</ThemedText>}
+                          </Pressable>
+                        )}
+                      </View>
+                    );
+                  })}
+
+                  {error ? (
+                    <ThemedText accessibilityLiveRegion="polite" style={styles.error}>
+                      {error}
+                    </ThemedText>
+                  ) : null}
+                </ScrollView>
+              </>
+            )}
+          </View>
         </KeyboardAvoidingView>
-      </Pressable>
+      </View>
     </Modal>
   );
 }
 
 const styles = StyleSheet.create({
-  backdrop: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(9,23,17,0.66)' },
+  root: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(9,23,17,0.66)' },
+  lift: { width: '100%' },
+
   sheet: {
-    maxHeight: '90%', borderTopLeftRadius: 34, borderTopRightRadius: 34,
-    paddingHorizontal: 20, paddingTop: 12, paddingBottom: 36,
+    width: '100%',
+    backgroundColor: Brand.forest,
+    borderTopLeftRadius: 28,
+    borderTopRightRadius: 28,
+    paddingHorizontal: 20,
+    paddingTop: 10,
+    gap: 14,
   },
-  content: { gap: 16, paddingBottom: 12 },
-  handle: { width: 44, height: 5, borderRadius: 999, alignSelf: 'center', marginBottom: 16 },
-  eyebrow: { fontSize: 10, fontWeight: '800', letterSpacing: 1.5 },
-  title: { fontFamily: Fonts.serif, fontSize: 30, lineHeight: 36, letterSpacing: -1 },
-  description: { fontSize: 14, lineHeight: 21 },
-  group: { gap: 8 },
-  label: { fontSize: 10, fontWeight: '800', letterSpacing: 1.5 },
+
+  handle: {
+    width: 38, height: 4, borderRadius: 999,
+    backgroundColor: '#4E7060', alignSelf: 'center',
+  },
+
+  header: { flexDirection: 'row', alignItems: 'flex-start', gap: 12 },
+  headerCopy: { flex: 1, minWidth: 0, gap: 4 },
+  eyebrow: { color: Brand.lime, fontSize: 10, lineHeight: 16, letterSpacing: 1 },
+  title: { color: '#FFFFFF', fontSize: 24, lineHeight: 30, fontWeight: '600' },
+
+  close: {
+    width: 34, height: 34, flexShrink: 0, borderRadius: 17,
+    backgroundColor: '#1B3B2D', alignItems: 'center', justifyContent: 'center',
+  },
+  closeText: { color: '#DCE7DA', fontSize: 20, lineHeight: 24 },
+
   input: {
-    minHeight: 54, borderRadius: 17, paddingHorizontal: 16, paddingVertical: 14,
-    fontSize: 16, lineHeight: 23, borderWidth: 1,
+    minHeight: 50, borderRadius: 14, paddingHorizontal: 14, paddingVertical: 12,
+    color: '#FFFFFF', backgroundColor: '#1B3B2D',
+    borderWidth: 1, borderColor: '#3D6350', fontSize: 16, lineHeight: 22,
   },
+
+  // flexShrink lets the list give way to the keyboard instead of pushing the
+  // sheet past the bottom of the screen.
+  list: { flexShrink: 1 },
+  listContent: { gap: 10, paddingBottom: 4 },
+
+  group: { gap: 10 },
+  label: { color: Brand.lime, fontSize: 10, lineHeight: 16, letterSpacing: 1 },
+
   row: {
     flexDirection: 'row', alignItems: 'center', gap: 12,
-    borderRadius: 18, borderWidth: 1, padding: 14,
+    borderRadius: 16, padding: 14, backgroundColor: '#1B3B2D',
   },
   rowCopy: { flex: 1, minWidth: 0, gap: 2 },
-  rowName: { fontSize: 15, fontWeight: '700' },
-  rowAction: {
-    minHeight: 40, minWidth: 82, alignItems: 'center', justifyContent: 'center',
-    paddingHorizontal: 14, borderRadius: 13,
+  rowName: { color: '#FFFFFF', fontSize: 15, fontWeight: '700' },
+  rowMeta: { color: '#B9CEBF', fontSize: 13, lineHeight: 20 },
+
+  action: {
+    minHeight: 40, minWidth: 84, flexShrink: 0,
+    alignItems: 'center', justifyContent: 'center',
+    paddingHorizontal: 14, borderRadius: 12, backgroundColor: Brand.lime,
   },
-  rowActionText: { fontWeight: '700', fontSize: 14 },
-  badge: { minHeight: 40, justifyContent: 'center', paddingHorizontal: 14, borderRadius: 13 },
-  error: { fontSize: 14, lineHeight: 21 },
-  action: { minHeight: 54, borderRadius: 17, alignItems: 'center', justifyContent: 'center' },
-  actionText: { fontWeight: '700' },
+  actionText: { color: Brand.ink, fontWeight: '700', fontSize: 14 },
+
+  badge: {
+    minHeight: 40, flexShrink: 0, justifyContent: 'center',
+    paddingHorizontal: 14, borderRadius: 12,
+    borderWidth: 1, borderColor: '#3D6350',
+  },
+  badgeText: { color: '#B9CEBF', fontSize: 13, fontWeight: '600' },
+
+  signedOut: { gap: 14, paddingBottom: 4 },
+  body: { color: '#DCE7DA', fontSize: 15, lineHeight: 23 },
+  primary: {
+    minHeight: 52, borderRadius: 16, backgroundColor: Brand.lime,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  primaryText: { color: Brand.ink, fontWeight: '700' },
+
+  centered: { paddingVertical: 28, alignItems: 'center' },
+  error: { color: '#F3C7C7', fontSize: 14, lineHeight: 21 },
   dim: { opacity: 0.6 },
 });
