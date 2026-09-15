@@ -6,6 +6,7 @@ import {
 
 import {
   ActivityIndicator,
+  Image,
   Pressable,
   StyleSheet,
   View,
@@ -25,6 +26,7 @@ import { Brand, Fonts } from '@/constants/theme';
 
 import { getLecture } from '@/services/lectures';
 import { getCourse } from '@/services/courses';
+import { getMaterialUrl, getMaterials } from '@/services/materials';
 
 import type {
   Course,
@@ -51,6 +53,9 @@ export default function LectureNotebookScreen() {
   const [attempt, setAttempt] =
     useState(0);
 
+  const [originals, setOriginals] =
+    useState<string[]>([]);
+
   useEffect(() => {
     let active = true;
 
@@ -69,6 +74,7 @@ export default function LectureNotebookScreen() {
         if (!nextLecture) {
           setLecture(null);
           setCourse(null);
+          setOriginals([]);
           return;
         }
 
@@ -84,6 +90,37 @@ export default function LectureNotebookScreen() {
         }
 
         setCourse(nextCourse);
+
+        // Originals are supporting content: a failure here must not take down
+        // the notebook the student came to read.
+        try {
+          const materials =
+            await getMaterials(
+              nextLecture.id
+            );
+
+          const urls =
+            await Promise.all(
+              materials.map((material) =>
+                getMaterialUrl(material)
+              )
+            );
+
+          if (!active) {
+            return;
+          }
+
+          setOriginals(
+            urls.filter(
+              (url): url is string =>
+                typeof url === 'string'
+            )
+          );
+        } catch {
+          if (active) {
+            setOriginals([]);
+          }
+        }
       } catch {
         if (active) {
           setError(true);
@@ -521,10 +558,49 @@ export default function LectureNotebookScreen() {
         </NotebookSection>
       ) : null}
 
+      {/* ORIGINAL MATERIAL */}
+
+      {originals.length > 0 ? (
+        <NotebookSection
+          number="09"
+          eyebrow="STRAIGHT FROM CLASS"
+          title="Your original material"
+        >
+          <View style={styles.originals}>
+            {originals.map((uri, index) => (
+              <View
+                key={uri}
+                style={styles.originalCard}
+              >
+                <Image
+                  source={{ uri }}
+                  style={styles.originalImage}
+                  resizeMode="cover"
+                  accessibilityLabel={
+                    originals.length === 1
+                      ? 'Original captured material for this lecture'
+                      : `Original captured material ${index + 1} of ${originals.length}`
+                  }
+                />
+              </View>
+            ))}
+          </View>
+
+          <ThemedText
+            type="small"
+            themeColor="textSecondary"
+          >
+            {originals.length === 1
+              ? 'The capture this notebook was built from. ClassLens organized around it — it never replaced it.'
+              : 'The captures this notebook was built from. ClassLens organized around them — it never replaced them.'}
+          </ThemedText>
+        </NotebookSection>
+      ) : null}
+
       {/* STUDY ACTIONS */}
 
       <NotebookSection
-        number="09"
+        number="10"
         eyebrow="STUDY WITH CLASSLENS"
         title="Go deeper"
       >
@@ -951,6 +1027,30 @@ const styles = StyleSheet.create({
     width: '100%',
     fontSize: 13,
     lineHeight: 20,
+  },
+
+  originals: {
+    width: '100%',
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+  },
+
+  originalCard: {
+    flexGrow: 1,
+    flexBasis: '46%',
+    minWidth: 0,
+    height: 190,
+    overflow: 'hidden',
+    borderRadius: 18,
+    backgroundColor: '#E9EDE7',
+    borderWidth: 1,
+    borderColor: '#DDE4DD',
+  },
+
+  originalImage: {
+    width: '100%',
+    height: '100%',
   },
 
   summaryBlock: {

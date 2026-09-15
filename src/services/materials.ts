@@ -125,3 +125,34 @@ export async function attachMaterialToLecture(
   if (existing.lecture_id !== null) throw new Error('Material is already attached to a lecture.');
   throw new Error('Material was not attached. Check lecture existence and database permissions.');
 }
+
+/** Original captures attached to a lecture, oldest first. */
+export async function getMaterials(lectureId: string): Promise<Material[]> {
+  // Mock mode has no uploads, so a lecture there never has originals.
+  if (getDataMode() !== 'supabase' || !lectureId.trim()) return [];
+  const { supabase } = await import('@/lib/supabase');
+  const { data, error } = await supabase.from('materials')
+    .select(materialColumns).eq('lecture_id', lectureId)
+    .order('created_at').order('id').returns<MaterialRow[]>();
+  if (error) throw new Error(`Could not load materials: ${error.message}`);
+  return data.map(mapMaterial);
+}
+
+/**
+ * Short-lived signed URL for a private original. Never persisted: the bucket
+ * stays private and the link expires. Returns null so one unreadable object
+ * degrades to a placeholder instead of failing the whole lecture screen.
+ */
+export async function getMaterialUrl(material: Material, expiresInSeconds = 3600): Promise<string | null> {
+  if (getDataMode() !== 'supabase' || !material.filePath.trim()) return null;
+  try {
+    const { supabase } = await import('@/lib/supabase');
+    const { data, error } = await supabase.storage
+      .from(bucketName)
+      .createSignedUrl(material.filePath, expiresInSeconds);
+    if (error || !data?.signedUrl) return null;
+    return data.signedUrl;
+  } catch {
+    return null;
+  }
+}

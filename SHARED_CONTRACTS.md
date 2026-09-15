@@ -103,6 +103,8 @@ getLecture(id: string): Promise<Lecture | null>
 createLecture(input: CreateLectureInput): Promise<Lecture>
 uploadMaterial(file: MaterialUploadInput): Promise<Material>
 attachMaterialToLecture(materialId: string, lectureId: string): Promise<Material>
+getMaterials(lectureId: string): Promise<Material[]>
+getMaterialUrl(material: Material, expiresInSeconds?: number): Promise<string | null>
 analyzeMaterial(material: Material): Promise<LectureAnalysis>
 askLecture(lectureId: string, question: string): Promise<AskLectureResult>
 generateQuiz(lectureId: string): Promise<GenerateQuizResult>
@@ -113,6 +115,21 @@ Course reads live in `services/courses.ts`; lecture reads/creation in
 Missing individual records return null; empty collections return []. Failures
 reject and must be handled by the UI. createLecture validates the course and persists in Supabase mode; mock mode stores data in memory only. Quiz generation invokes generate-quiz; Ask Lecture invokes ask-lecture. Photo analysis invokes the deployed analyze-material Edge Function. Photo uploads
 require Supabase mode and the photo Storage migration. Screens must not import mock fixtures directly.
+
+### Reading original materials
+
+getMaterials returns the originals attached to a lecture, oldest first, using the
+existing anon SELECT policy on materials. Mock mode returns [] because it has no
+uploads. Staged materials (lecture_id null) are never returned.
+
+getMaterialUrl issues a short-lived signed URL for one private object through the
+existing lecture-materials SELECT policy. The bucket stays private, URLs expire
+(one hour by default), and no URL is ever stored in the database or in a type.
+It returns null instead of throwing, so one unreadable object degrades to a
+placeholder rather than failing the screen that renders it.
+
+Originals are the source of truth. Analysis organizes study information around
+them and never replaces or rewrites them; deleting a material is not permitted.
 
 ### Course creation
 
