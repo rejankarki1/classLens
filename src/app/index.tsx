@@ -2,6 +2,7 @@ import { router, useFocusEffect } from "expo-router";
 import { useCallback, useState } from "react";
 import { Modal, Pressable, StyleSheet, View } from "react-native";
 
+import { ClassLensBrandMark } from "@/components/ClassLensBrandMark";
 import { CourseCard } from "@/components/CourseCard";
 import { LectureCard } from "@/components/LectureCard";
 import { ScanArtwork } from "@/components/ScanArtwork";
@@ -108,7 +109,7 @@ export default function HomeScreen() {
 
           <View style={styles.brand}>
             <View style={styles.brandMark}>
-              <ThemedText style={styles.brandMarkText}>✦</ThemedText>
+              <ClassLensBrandMark size={42} />
             </View>
 
             <ThemedText style={styles.brandName}>ClassLens</ThemedText>

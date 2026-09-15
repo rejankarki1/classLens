@@ -26,7 +26,7 @@ import { ThemedText } from '@/components/themed-text';
 type MainRoute =
   | '/'
   | '/courses'
-  | '/library'
+  | '/catchup'
   | '/profile';
 
 const HOLD_TIME = 1000;
@@ -76,19 +76,19 @@ export function AppBottomNav() {
     <>
       <View style={styles.wrapper}>
         <View style={styles.nav}>
-          <NavItem icon="⌂" label="Home" route="/" />
-          <NavItem icon="▤" label="Courses" route="/courses" />
+          <NavItem icon="🏠" label="Home" route="/" />
+          <NavItem icon="📚" label="Courses" route="/courses" />
 
           <View style={styles.centerSpace} />
 
-          <NavItem icon="▱" label="Library" route="/library" />
-          <NavItem icon="○" label="Profile" route="/profile" />
+          <NavItem icon="🔄" label="CatchUp" route="/catchup" />
+          <NavItem icon="👤" label="Profile" route="/profile" />
 
           <View style={styles.capturePosition}>
             <Pressable
               accessibilityRole="button"
               accessibilityLabel="ClassLens capture"
-              accessibilityHint="Tap for photo capture. Hold for three seconds for photo, video, audio and file options."
+              accessibilityHint="Tap for photo capture. Hold for one second for photo, video, audio and file options."
               delayLongPress={HOLD_TIME}
               onPressIn={handlePressIn}
               onLongPress={handleLongPress}
@@ -157,7 +157,7 @@ export function AppBottomNav() {
           allowFontScaling={false}
           style={styles.hint}
         >
-          Tap camera · Hold 3s for more
+          Tap camera · Hold 1s for more
         </ThemedText>
       </View>
 
@@ -194,7 +194,7 @@ function NavItem({
       accessibilityRole="button"
       accessibilityLabel={label}
       accessibilityState={{ selected: active }}
-      onPress={() => router.replace(route)}
+      onPress={() => router.replace(route as any)}
       style={({ pressed }) => [
         styles.item,
         pressed && styles.itemPressed,
@@ -254,11 +254,11 @@ const styles = StyleSheet.create({
   },
 
   item: {
-    width: 56,
-    minHeight: 58,
+    width: 58,
+    minHeight: 62,
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 3,
+    gap: 4,
     position: 'relative',
   },
 
@@ -269,12 +269,13 @@ const styles = StyleSheet.create({
 
   icon: {
     color: '#8C9791',
-    fontSize: 19,
+    fontSize: 23,
+    lineHeight: 28,
   },
 
   label: {
     color: '#8C9791',
-    fontSize: 9,
+    fontSize: 10,
     fontWeight: '600',
   },
 

@@ -42,6 +42,11 @@ export function Screen({
         keyboardShouldPersistTaps="handled"
         contentContainerStyle={[
           styles.content,
+          {
+            // SafeAreaView already handles the iPhone notch /
+            // Dynamic Island. This is only intentional visual spacing.
+            paddingTop: 10,
+          },
           showBottomNav && styles.contentWithNav,
         ]}
       >
@@ -71,7 +76,7 @@ const styles = StyleSheet.create({
     flex: 1,
   },
 
-  content: { paddingHorizontal: 24, paddingTop: 18,
+  content: { paddingHorizontal: 24,
     paddingBottom: 40,
     gap: 24,
     width: '100%',
