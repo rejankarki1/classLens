@@ -26,8 +26,9 @@ import { ThemedText } from '@/components/themed-text';
 import { Screen } from '@/components/ui/Screen';
 
 import { getCourses } from '@/services/courses';
-import { copyLectureToMyNotes, getLecturesByOwners } from '@/services/lectures';
-import { getFriends } from '@/services/friends';
+import { copyLectureToMyNotes, getLecture, getLecturesByOwners } from '@/services/lectures';
+import type { SharedLecture } from '@/services/lectures';
+import { getFriends, getProfileById } from '@/services/friends';
 import { getCurrentUserId } from '@/services/auth';
 
 import { Brand, Colors, Fonts } from '@/constants/theme';
@@ -42,6 +43,10 @@ import type {
   Lecture,
   Profile,
 } from '@/types';
+
+// The seeded demo classmate and their shared lecture.
+const demoLectureId = 'demo-prashant-lecture';
+const demoOwnerId = 'd3405e91-5a2b-4c77-9f61-0b8a7c2d4e10';
 
 type CatchupItem = {
   lecture: Lecture;
@@ -92,26 +97,43 @@ export default function CatchupMateScreen() {
           setAdded(false);
 
           // Catch Up surfaces what accepted classmates shared, never your own
-          // notebooks, so with no friends yet there is nothing to catch up on.
-          const [accepted, me] = await Promise.all([
-            getFriends(),
-            getCurrentUserId(),
-          ]);
+          // notebooks. Friend lookups need a session, so they can fail outright
+          // in the signed-out demo; that must not blank the screen.
+          let accepted: Profile[] = [];
+          try {
+            accepted = await getFriends();
+          } catch {
+            accepted = [];
+          }
 
           if (!active) return;
           setFriends(accepted);
 
-          const shared = await getLecturesByOwners(
-            accepted.map((friend) => friend.id)
-          );
+          let shared: Awaited<ReturnType<typeof getLecturesByOwners>> = [];
+          try {
+            shared = await getLecturesByOwners(accepted.map((friend) => friend.id));
+          } catch {
+            shared = [];
+          }
 
           if (!active) return;
 
-          const newest = shared.find(
-            (lecture: Lecture) => lecture.courseId
-          );
+          let lecture: Lecture | null =
+            shared.find((entry) => entry.courseId) ?? null;
+          let owner = lecture
+            ? accepted.find((friend) => friend.id === (lecture as SharedLecture).ownerId)
+            : undefined;
 
-          if (!newest || !me) {
+          // Demo fallback: the seeded classmate's lecture is readable even when
+          // the friend query returned nothing, so the demo always has an item.
+          if (!lecture) {
+            lecture = await getLecture(demoLectureId);
+            if (!active) return;
+            if (lecture) owner = (await getProfileById(demoOwnerId)) ?? undefined;
+            if (!active) return;
+          }
+
+          if (!lecture) {
             setItem(null);
             return;
           }
@@ -120,13 +142,11 @@ export default function CatchupMateScreen() {
           if (!active) return;
 
           setItem({
-            lecture: newest,
+            lecture,
             course: courses.find(
-              (course) => course.id === newest.courseId
+              (course) => course.id === lecture?.courseId
             ),
-            sharedBy: accepted.find(
-              (friend) => friend.id === newest.ownerId
-            ),
+            sharedBy: owner,
           });
         } catch {
           if (active) {

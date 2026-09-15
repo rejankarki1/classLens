@@ -166,3 +166,17 @@ export async function acceptDemoFriendship(demoProfileId: string): Promise<void>
   const { error } = await supabase.rpc('accept_demo_friendship', { demo_id: demoProfileId });
   if (error) throw new Error(`Could not add the demo classmate: ${error.message}`);
 }
+
+/** Read one profile without needing a session, for the signed-out demo path. */
+export async function getProfileById(id: string): Promise<Profile | null> {
+  if (getDataMode() !== 'supabase' || !id.trim()) return null;
+  const { supabase } = await import('@/lib/supabase');
+  const { data, error } = await supabase
+    .from('profiles')
+    .select(profileColumns)
+    .eq('id', id)
+    .returns<ProfileRow[]>()
+    .maybeSingle();
+  if (error || !data) return null;
+  return toProfile(data);
+}

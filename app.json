@@ -8,7 +8,8 @@
     "scheme": "classlens",
     "userInterfaceStyle": "automatic",
     "ios": {
-      "bundleIdentifier": "com.rejan-karki1.classLens"
+      "bundleIdentifier": "com.rejan-karki1.classLens",
+      "backgroundColor": "#234E3C"
     },
     "android": {
       "adaptiveIcon": {
@@ -36,7 +37,8 @@
         {
           "backgroundColor": "#234E3C",
           "image": "./assets/images/classlens-splash.png",
-          "imageWidth": 200,
+          "imageWidth": 240,
+          "resizeMode": "contain",
           "dark": {
             "backgroundColor": "#234E3C",
             "image": "./assets/images/classlens-splash.png"
@@ -49,6 +51,11 @@
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
+    },
+    "splash": {
+      "backgroundColor": "#234E3C",
+      "image": "./assets/images/classlens-splash.png",
+      "resizeMode": "contain"
     }
   }
 }
