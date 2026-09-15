@@ -134,7 +134,12 @@ export default function CaptureScreen() {
 
   return (
     <Screen>
-      <StatusBadge label="01 / CAPTURE" />
+      {/* This screen has a native header, so Screen's own top safe-area inset
+          is counted twice. Pulling the first child up closes that dead space;
+          negative margin on the first child lifts everything below it. */}
+      <View style={styles.lift}>
+        <StatusBadge label="01 / CAPTURE" />
+      </View>
 
       <View style={styles.intro}>
         <ThemedText type="title" style={styles.title}>
@@ -251,6 +256,10 @@ export default function CaptureScreen() {
 }
 
 const styles = StyleSheet.create({
+  lift: {
+    marginTop: -100,
+  },
+
   intro: {
     gap: 16,
   },
