@@ -18,9 +18,11 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { ThemedText } from '@/components/themed-text';
 import { Brand } from '@/constants/theme';
+import { getInitials } from '@/features/profile/initials';
 
 import { getCurrentUserId } from '@/services/auth';
 import {
+  acceptDemoFriendship,
   acceptFriendRequest,
   getFriendshipStates,
   getIncomingRequests,
@@ -119,7 +121,14 @@ export function AddFriendSheet({ visible, onClose, onChanged }: Props) {
     setWorking(profile.id);
     setError('');
     try {
-      await sendFriendRequest(profile.id);
+      // The seeded demo classmate has no account to accept from, so it uses the
+      // demo-scoped path. Real classmates always go through a real request.
+      if (profile.isDemo) {
+        await acceptDemoFriendship(profile.id);
+        onChanged();
+      } else {
+        await sendFriendRequest(profile.id);
+      }
       await refresh();
     } catch (caught) {
       setError(message(caught));
@@ -237,6 +246,12 @@ export function AddFriendSheet({ visible, onClose, onChanged }: Props) {
 
                       {requests.map((request) => (
                         <View key={request.id} style={styles.row}>
+                          <View style={styles.avatar}>
+                            <ThemedText allowFontScaling={false} style={styles.avatarText}>
+                              {getInitials(request.from.name) || '··'}
+                            </ThemedText>
+                          </View>
+
                           <View style={styles.rowCopy}>
                             <ThemedText style={styles.rowName}>{request.from.name}</ThemedText>
                             <ThemedText style={styles.rowMeta}>
@@ -283,6 +298,12 @@ export function AddFriendSheet({ visible, onClose, onChanged }: Props) {
                     const state = states.get(profile.id);
                     return (
                       <View key={profile.id} style={styles.row}>
+                        <View style={styles.avatar}>
+                          <ThemedText allowFontScaling={false} style={styles.avatarText}>
+                            {getInitials(profile.name) || '··'}
+                          </ThemedText>
+                        </View>
+
                         <View style={styles.rowCopy}>
                           <ThemedText style={styles.rowName}>{profile.name}</ThemedText>
                           <ThemedText style={styles.rowMeta}>
@@ -379,6 +400,11 @@ const styles = StyleSheet.create({
     flexDirection: 'row', alignItems: 'center', gap: 12,
     borderRadius: 16, padding: 14, backgroundColor: '#1B3B2D',
   },
+  avatar: {
+    width: 40, height: 40, flexShrink: 0, borderRadius: 14,
+    backgroundColor: '#2C5B43', alignItems: 'center', justifyContent: 'center',
+  },
+  avatarText: { color: Brand.lime, fontSize: 13, fontWeight: '700' },
   rowCopy: { flex: 1, minWidth: 0, gap: 2 },
   rowName: { color: '#FFFFFF', fontSize: 15, fontWeight: '700' },
   rowMeta: { color: '#B9CEBF', fontSize: 13, lineHeight: 20 },

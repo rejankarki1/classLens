@@ -19,6 +19,7 @@ import {
 } from 'react';
 
 import { AddFriendSheet } from '@/components/AddFriendSheet';
+import { getInitials } from '@/features/profile/initials';
 import { ClassLensLogo } from '@/components/ClassLensLogo';
 import { ThemedText } from '@/components/themed-text';
 import { Screen } from '@/components/ui/Screen';
@@ -39,6 +40,8 @@ import type {
 type CatchupItem = {
   lecture: Lecture;
   course?: Course;
+  /** The classmate whose notebook this came from. */
+  sharedBy?: Profile;
 };
 
 export default function CatchupMateScreen() {
@@ -111,6 +114,9 @@ export default function CatchupMateScreen() {
             lecture: newest,
             course: courses.find(
               (course) => course.id === newest.courseId
+            ),
+            sharedBy: accepted.find(
+              (friend) => friend.id === newest.ownerId
             ),
           });
         } catch {
@@ -456,7 +462,7 @@ function CatchupAlert({
               allowFontScaling={false}
               style={styles.avatarText}
             >
-              CM
+              {item?.sharedBy ? getInitials(item.sharedBy.name) : '··'}
             </ThemedText>
           </View>
 
@@ -588,13 +594,13 @@ function CatchupSheet({
                 allowFontScaling={false}
                 style={styles.sharedAvatarText}
               >
-                CM
+                {item?.sharedBy ? getInitials(item.sharedBy.name) : '··'}
               </ThemedText>
             </View>
 
             <View style={styles.sharedByCopy}>
               <ThemedText style={styles.sharedByName}>
-                Classmate share
+                {item?.sharedBy?.name ?? 'Classmate share'}
               </ThemedText>
 
               <ThemedText

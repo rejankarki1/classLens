@@ -1,7 +1,7 @@
 import { getDataMode } from '@/lib/dataMode';
 import type { FriendRequest, Profile } from '@/types';
 
-const profileColumns = 'id, name, year, major';
+const profileColumns = 'id, name, year, major, is_demo';
 
 function requireSupabase(action: string) {
   if (getDataMode() !== 'supabase') {
@@ -15,6 +15,18 @@ async function session() {
   const id = data.session?.user.id;
   if (!id) throw new Error('You are signed out. Sign in and try again.');
   return { supabase, id };
+}
+
+type ProfileRow = {
+  id: string;
+  name: string;
+  year: Profile['year'];
+  major: string;
+  is_demo: boolean | null;
+};
+
+function toProfile(row: ProfileRow): Profile {
+  return { id: row.id, name: row.name, year: row.year, major: row.major, isDemo: row.is_demo === true };
 }
 
 type FriendshipRow = {
@@ -41,10 +53,10 @@ export async function searchProfiles(query: string): Promise<Profile[]> {
     .neq('id', id)
     .order('name')
     .limit(20)
-    .returns<Profile[]>();
+    .returns<ProfileRow[]>();
 
   if (error) throw new Error(`Could not search classmates: ${error.message}`);
-  return data;
+  return data.map(toProfile);
 }
 
 /** Every friendship involving the signed-in user, in either direction. */
@@ -67,10 +79,10 @@ async function profilesByIds(ids: string[]): Promise<Map<string, Profile>> {
     .from('profiles')
     .select(profileColumns)
     .in('id', ids)
-    .returns<Profile[]>();
+    .returns<ProfileRow[]>();
 
   if (error) throw new Error(`Could not load classmate profiles: ${error.message}`);
-  return new Map(data.map((profile) => [profile.id, profile]));
+  return new Map(data.map((row) => [row.id, toProfile(row)]));
 }
 
 /** Accepted friends only. This is what Catch Up lists. */
@@ -139,4 +151,18 @@ export async function acceptFriendRequest(friendshipId: string): Promise<void> {
 
   if (error) throw new Error(`Could not accept the request: ${error.message}`);
   if (!data) throw new Error('That request is no longer pending.');
+}
+
+
+/**
+ * Demo-only: befriend the seeded classmate without a second device. The database
+ * function refuses any profile that is not flagged is_demo, so this cannot force
+ * a friendship with a real account, and it is granted to authenticated only.
+ * Real requests still go through sendFriendRequest and a real acceptance.
+ */
+export async function acceptDemoFriendship(demoProfileId: string): Promise<void> {
+  requireSupabase('Adding the demo classmate');
+  const { supabase } = await session();
+  const { error } = await supabase.rpc('accept_demo_friendship', { demo_id: demoProfileId });
+  if (error) throw new Error(`Could not add the demo classmate: ${error.message}`);
 }

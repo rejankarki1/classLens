@@ -103,19 +103,22 @@ export async function createLecture(input: CreateLectureInput): Promise<Lecture>
   return fromRow(data);
 }
 
+/** A friend's lecture, carrying who shared it so the UI can credit them. */
+export type SharedLecture = Lecture & { ownerId: string };
+
 /** Catch Up: lectures shared by the given classmates, newest first. */
-export async function getLecturesByOwners(ownerIds: string[]): Promise<Lecture[]> {
+export async function getLecturesByOwners(ownerIds: string[]): Promise<SharedLecture[]> {
   if (getDataMode() !== 'supabase' || !ownerIds.length) return [];
   const { supabase } = await import('@/lib/supabase');
   const { data, error } = await supabase
     .from('lectures')
-    .select(lectureColumns)
+    .select(`${lectureColumns}, owner_id`)
     .in('owner_id', ownerIds)
     .order('created_at', { ascending: false })
     .order('id')
-    .returns<LectureRow[]>();
+    .returns<(LectureRow & { owner_id: string })[]>();
   if (error) throw new Error(`Could not load shared lectures: ${error.message}`);
-  return data.map(fromRow);
+  return data.map((row) => ({ ...fromRow(row), ownerId: row.owner_id }));
 }
 
 /**

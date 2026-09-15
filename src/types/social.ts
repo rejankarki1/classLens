@@ -8,9 +8,11 @@ export type Profile = {
   name: string;
   year: Year;
   major: string;
+  /** Seeded demo classmate, not backed by a real account. */
+  isDemo?: boolean;
 };
 
-export type ProfileInput = Omit<Profile, 'id'>;
+export type ProfileInput = Omit<Profile, 'id' | 'isDemo'>;
 
 export type FriendRequest = {
   /** Friendship row ID, used to accept. */

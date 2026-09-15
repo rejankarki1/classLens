@@ -14,14 +14,9 @@ import { Screen } from '@/components/ui/Screen';
 
 import { Brand, Fonts } from '@/constants/theme';
 
+import { getInitials } from '@/features/profile/initials';
 import { getMyProfile, signOut } from '@/services/auth';
 import type { Profile } from '@/types';
-
-function initials(name: string): string {
-  const parts = name.trim().split(/\s+/).filter(Boolean);
-  if (!parts.length) return '··';
-  return (parts[0][0] + (parts[1]?.[0] ?? '')).toUpperCase();
-}
 
 export default function ProfileScreen() {
   const [profile, setProfile] = useState<Profile | null>(null);

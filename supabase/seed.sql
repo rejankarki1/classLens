@@ -27,4 +27,50 @@ values
   ('eng-1320',  'ENG 1320',  'College Writing II',                        '')
 on conflict (id) do nothing;
 
+-- Demo classmate for Catch Up. Not backed by an auth.users row: this profile
+-- exists only so the Catch Up flow can be shown without a second device. It is
+-- flagged is_demo, which is the only thing accept_demo_friendship will befriend.
+-- Fixed UUID so reruns update rather than duplicate.
+insert into public.profiles (id, name, year, major, is_demo)
+values (
+  'd3405e91-5a2b-4c77-9f61-0b8a7c2d4e10',
+  'Prashant Bhattarai',
+  'Junior',
+  'Computer Science',
+  true
+)
+on conflict (id) do update
+  set name = excluded.name,
+      year = excluded.year,
+      major = excluded.major,
+      is_demo = true;
+
+-- Placeholder lecture owned by the demo classmate, so Catch Up has exactly one
+-- shared item to surface and "+ Add to My Notes" has something to copy.
+-- Intentionally minimal: real content is supplied separately.
+insert into public.lectures (
+  id, course_id, title, summary,
+  key_concepts, important_points, assignments, exam_mentions, owner_id
+)
+values (
+  'demo-prashant-lecture',
+  'cs-3358',
+  'Shared class notes',
+  'Placeholder for the notes Prashant shared. Replace with the real lecture content.',
+  array[]::text[],
+  array[]::text[],
+  array[]::text[],
+  array[]::text[],
+  'd3405e91-5a2b-4c77-9f61-0b8a7c2d4e10'
+)
+on conflict (id) do update
+  set course_id = excluded.course_id,
+      title = excluded.title,
+      summary = excluded.summary,
+      key_concepts = excluded.key_concepts,
+      important_points = excluded.important_points,
+      assignments = excluded.assignments,
+      exam_mentions = excluded.exam_mentions,
+      owner_id = excluded.owner_id;
+
 commit;

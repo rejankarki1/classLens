@@ -16,9 +16,11 @@ import {
 } from "@/components/ui/Editorial";
 import { Screen } from "@/components/ui/Screen";
 import { Brand, Fonts } from "@/constants/theme";
+import { getInitials } from "@/features/profile/initials";
+import { getMyProfile } from "@/services/auth";
 import { getCourses } from "@/services/courses";
 import { getLectures } from "@/services/lectures";
-import type { Course, Lecture } from "@/types";
+import type { Course, Lecture, Profile } from "@/types";
 
 export default function HomeScreen() {
   const [courses, setCourses] = useState<Course[]>([]);
@@ -34,6 +36,7 @@ export default function HomeScreen() {
   const [menuOpen, setMenuOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
+  const [profile, setProfile] = useState<Profile | null>(null);
 
   useFocusEffect(
     useCallback(() => {
@@ -43,6 +46,10 @@ export default function HomeScreen() {
       setError(false);
       setRecentError(false);
       setRecentLoading(true);
+
+      getMyProfile()
+        .then((data) => { if (active) setProfile(data); })
+        .catch(() => { if (active) setProfile(null); });
 
       getCourses()
         .then(async (data) => {
@@ -123,7 +130,9 @@ export default function HomeScreen() {
             onPress={() => setProfileOpen(true)}
             style={({ pressed }) => [styles.avatar, pressed && styles.pressed]}
           >
-            <ThemedText style={styles.avatarText}>P</ThemedText>
+            <ThemedText style={styles.avatarText}>
+              {profile ? getInitials(profile.name) || "·" : "·"}
+            </ThemedText>
           </Pressable>
         </View>
 
@@ -159,7 +168,9 @@ export default function HomeScreen() {
           ]}
         >
           <View style={styles.studentInitial}>
-            <ThemedText style={styles.studentInitialText}>PB</ThemedText>
+            <ThemedText style={styles.studentInitialText}>
+              {profile ? getInitials(profile.name) || "·" : "·"}
+            </ThemedText>
           </View>
 
           <View style={styles.studentCopy}>
@@ -443,7 +454,9 @@ export default function HomeScreen() {
 
             <View style={styles.profileHeader}>
               <View style={styles.profileAvatar}>
-                <ThemedText style={styles.profileAvatarText}>PB</ThemedText>
+                <ThemedText style={styles.profileAvatarText}>
+                    {profile ? getInitials(profile.name) || "·" : "·"}
+                  </ThemedText>
               </View>
 
               <View style={styles.profileHeaderCopy}>
