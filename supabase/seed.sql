@@ -45,21 +45,22 @@ on conflict (id) do update
       major = excluded.major,
       is_demo = true;
 
--- Placeholder lecture owned by the demo classmate, so Catch Up has exactly one
--- shared item to surface and "+ Add to My Notes" has something to copy.
--- Intentionally minimal: real content is supplied separately.
+-- The demo classmate's real lecture: assets/demo/prashant-assembly-notes.jpeg was
+-- uploaded through the normal pipeline and analysed by analyze-material. These are
+-- Gemini's actual fields for that photo; only the title is a chosen display name.
+-- exam_mentions is empty because the photo contains no exam information.
 insert into public.lectures (
   id, course_id, title, summary,
   key_concepts, important_points, assignments, exam_mentions, owner_id
 )
 values (
   'demo-prashant-lecture',
-  'cs-3358',
-  'Shared class notes',
-  'Placeholder for the notes Prashant shared. Replace with the real lecture content.',
-  array[]::text[],
-  array[]::text[],
-  array[]::text[],
+  'cs-2325',
+  'Assembly Language',
+  'These study notes provide a comprehensive reference for x86 assembly language programming, including register usage, conditional jumps, bitwise operations, loop structures, and common instructions like MOV, DIV, IDIV, and INVOKE.',
+  array['Conditional Jumps (jo, jc, jbe, jz, jnz, js, jns, jp, jnp)','Bitwise Operations (AND, OR, XOR, TEST)','Arithmetic Operations (ADD, SUB, MUL, IMUL, DIV, IDIV)','Register Usage (eax, ebx, ecx, edx, esi)','Looping Structures','Procedure Invocation (INVOKE, PROC, PROTO)']::text[],
+  array['DIV divides edx:eax; requires edx to be cleared first.','TEST checks bits without changing the register values.','AND is used for clearing bits; OR is used for setting bits.','SF=1 indicates negative values (js), SF=0 indicates positive (jns).','Floating point/conditional jumps: FP maps to loopnz/jnz, FN maps to loopz/jz.']::text[],
+  array['Write a procedure named CountMatches that receives two arrays of signed doublewords and their length, then returns the count of matching elements.']::text[],
   array[]::text[],
   'd3405e91-5a2b-4c77-9f61-0b8a7c2d4e10'
 )
