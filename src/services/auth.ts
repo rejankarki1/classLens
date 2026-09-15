@@ -2,6 +2,41 @@ import { getDataMode } from '@/lib/dataMode';
 import type { Profile, ProfileInput } from '@/types';
 
 const profileColumns = 'id, name, year, major';
+const demoIdKey = 'classlens.demo-profile-id';
+
+function localStore(): { getItem(key: string): string | null; setItem(key: string, value: string): void } | null {
+  const store = (globalThis as { localStorage?: { getItem(key: string): string | null; setItem(key: string, value: string): void } }).localStorage;
+  return store ?? null;
+}
+
+/**
+ * Whose profile to read and write. A signed-in user owns their auth id. The
+ * signed-out demo keeps one stable local id instead, so onboarding can save and
+ * the same profile is found again on the next launch.
+ */
+async function profileOwnerId(): Promise<string> {
+  const { supabase } = await import('@/lib/supabase');
+  const { data } = await supabase.auth.getSession();
+  const signedIn = data.session?.user.id;
+  if (signedIn) return signedIn;
+
+  const store = localStore();
+  const saved = store?.getItem(demoIdKey);
+  if (saved) return saved;
+
+  const { randomUUID } = await import('expo-crypto');
+  const generated = randomUUID();
+  store?.setItem(demoIdKey, generated);
+  return generated;
+}
+
+const profileListeners = new Set<() => void>();
+
+/** Lets the route gate re-check the profile the moment onboarding saves. */
+export function onProfileChange(listener: () => void): () => void {
+  profileListeners.add(listener);
+  return () => { profileListeners.delete(listener); };
+}
 
 function requireSupabase(action: string) {
   if (getDataMode() !== 'supabase') {
@@ -66,9 +101,7 @@ export async function signOut(): Promise<void> {
 export async function getMyProfile(): Promise<Profile | null> {
   if (getDataMode() !== 'supabase') return null;
   const { supabase } = await import('@/lib/supabase');
-  const { data: session } = await supabase.auth.getSession();
-  const id = session.session?.user.id;
-  if (!id) return null;
+  const id = await profileOwnerId();
 
   const { data, error } = await supabase
     .from('profiles')
@@ -90,9 +123,7 @@ export async function saveMyProfile(input: ProfileInput): Promise<Profile> {
   if (!major) throw new Error('Your major or program is required.');
 
   const { supabase } = await import('@/lib/supabase');
-  const { data: session } = await supabase.auth.getSession();
-  const id = session.session?.user.id;
-  if (!id) throw new Error('You are signed out. Sign in and try again.');
+  const id = await profileOwnerId();
 
   const { data, error } = await supabase
     .from('profiles')
@@ -103,5 +134,6 @@ export async function saveMyProfile(input: ProfileInput): Promise<Profile> {
 
   if (error) throw new Error(`Could not save your profile: ${error.message}`);
   if (!data) throw new Error('No saved profile was returned.');
+  profileListeners.forEach((listener) => listener());
   return data;
 }

@@ -15,7 +15,7 @@ import { StatusBar } from 'expo-status-bar';
 
 import { useTheme } from '@/hooks/use-theme';
 import { Brand } from '@/constants/theme';
-import { getCurrentUserId, getMyProfile, onAuthChange } from '@/services/auth';
+import { getCurrentUserId, getMyProfile, onAuthChange, onProfileChange } from '@/services/auth';
 
 const authRoutes = ['login', 'signup'];
 
@@ -58,12 +58,17 @@ function useAuthGate() {
 
     void getCurrentUserId().then(resolve);
 
+    // Onboarding saves through the service, so re-resolve to release the gate.
+    const stopProfileWatch = onProfileChange(() => {
+      void getCurrentUserId().then(resolve);
+    });
+
     let unsubscribe: (() => void) | undefined;
     void onAuthChange((id) => { void resolve(id); }).then((off) => {
       if (active) unsubscribe = off; else off();
     });
 
-    return () => { active = false; unsubscribe?.(); };
+    return () => { active = false; stopProfileWatch(); unsubscribe?.(); };
   }, []);
 
   useEffect(() => {
