@@ -2,6 +2,7 @@ import { router, useFocusEffect } from "expo-router";
 import { useCallback, useState } from "react";
 import { Modal, Pressable, StyleSheet, View } from "react-native";
 
+import { AddCourseSheet } from "@/components/AddCourseSheet";
 import { ClassLensBrandMark } from "@/components/ClassLensBrandMark";
 import { CourseCard } from "@/components/CourseCard";
 import { LectureCard } from "@/components/LectureCard";
@@ -32,6 +33,7 @@ export default function HomeScreen() {
 
   const [menuOpen, setMenuOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
+  const [addOpen, setAddOpen] = useState(false);
 
   useFocusEffect(
     useCallback(() => {
@@ -411,8 +413,11 @@ export default function HomeScreen() {
 
             <MenuItem
               title="Add course"
-              detail="Course creation UI comes next"
-              onPress={() => setMenuOpen(false)}
+              detail="Create a course to organize captures"
+              onPress={() => {
+                setMenuOpen(false);
+                setAddOpen(true);
+              }}
             />
           </Pressable>
         </Pressable>
@@ -482,6 +487,26 @@ export default function HomeScreen() {
           </Pressable>
         </Pressable>
       </Modal>
+
+      <AddCourseSheet
+        visible={addOpen}
+        onClose={() => setAddOpen(false)}
+        onCreated={(course) => {
+          // Show it straight away; createCourse is idempotent, so replace any
+          // existing row with the same ID rather than listing it twice.
+          setCourses((current) =>
+            [
+              course,
+              ...current.filter((item) => item.id !== course.id),
+            ].sort(
+              (a, b) =>
+                a.code.localeCompare(b.code) ||
+                a.id.localeCompare(b.id)
+            )
+          );
+          setError(false);
+        }}
+      />
     </>
   );
 }

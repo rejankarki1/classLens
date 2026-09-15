@@ -14,6 +14,7 @@ import {
   useFocusEffect,
 } from 'expo-router';
 
+import { AddCourseSheet } from '@/components/AddCourseSheet';
 import { CourseCard } from '@/components/CourseCard';
 import { ClassLensLogo } from '@/components/ClassLensLogo';
 
@@ -37,6 +38,7 @@ export default function CoursesScreen() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
   const [attempt, setAttempt] = useState(0);
+  const [addOpen, setAddOpen] = useState(false);
 
   useFocusEffect(
     useCallback(() => {
@@ -98,7 +100,7 @@ export default function CoursesScreen() {
         <Pressable
           accessibilityRole="button"
           accessibilityLabel="Add course"
-          onPress={() => {}}
+          onPress={() => setAddOpen(true)}
           style={({ pressed }) => [
             styles.addButton,
             pressed && styles.pressed,
@@ -169,6 +171,26 @@ export default function CoursesScreen() {
           →
         </ThemedText>
       </Pressable>
+
+      <AddCourseSheet
+        visible={addOpen}
+        onClose={() => setAddOpen(false)}
+        onCreated={(course) => {
+          // Show it straight away; createCourse is idempotent, so replace any
+          // existing row with the same ID rather than listing it twice.
+          setCourses((current) =>
+            [
+              course,
+              ...current.filter((item) => item.id !== course.id),
+            ].sort(
+              (a, b) =>
+                a.code.localeCompare(b.code) ||
+                a.id.localeCompare(b.id)
+            )
+          );
+          setError(false);
+        }}
+      />
     </Screen>
   );
 }
