@@ -22,7 +22,12 @@ import { Screen } from '@/components/ui/Screen';
 import { EmptyState } from '@/components/ui/Editorial';
 import { StudyActions } from '@/components/StudyActions';
 
-import { Brand, Fonts } from '@/constants/theme';
+import { Brand, Colors, Fonts } from '@/constants/theme';
+
+// These notebook cards are painted a fixed cream/white, so text on them must use
+// the fixed dark palette. Inheriting theme.text turns them invisible in dark mode.
+const onCard = Colors.light.text;
+const onCardMuted = Colors.light.textSecondary;
 
 import { getLecture } from '@/services/lectures';
 import { getCourse } from '@/services/courses';
@@ -463,7 +468,7 @@ export default function LectureNotebookScreen() {
 
                 <ThemedText
                   type="small"
-                  themeColor="textSecondary"
+                  style={styles.onCardMuted}
                 >
                   Review these before the next assessment.
                 </ThemedText>
@@ -675,7 +680,6 @@ function MetaPill({
 
       <ThemedText
         type="small"
-        themeColor="textSecondary"
         style={styles.metaPillText}
       >
         {label}
@@ -703,7 +707,7 @@ function ConceptDiagram({
 
         <ThemedText
           type="small"
-          themeColor="textSecondary"
+          style={styles.onCardMuted}
         >
           Core learning path
         </ThemedText>
@@ -958,6 +962,11 @@ const styles = StyleSheet.create({
     flexShrink: 1,
     fontSize: 11,
     lineHeight: 16,
+    color: onCardMuted,
+  },
+
+  onCardMuted: {
+    color: onCardMuted,
   },
 
   heroDescription: {
@@ -1074,6 +1083,7 @@ const styles = StyleSheet.create({
   },
 
   summaryText: {
+    color: onCard,
     width: '100%',
     fontSize: 15,
     lineHeight: 25,
@@ -1114,6 +1124,7 @@ const styles = StyleSheet.create({
   },
 
   takeawayText: {
+    color: onCard,
     flex: 1,
     minWidth: 0,
     fontSize: 14,
@@ -1181,6 +1192,7 @@ const styles = StyleSheet.create({
   },
 
   notebookLead: {
+    color: onCard,
     width: '100%',
     fontSize: 15,
     lineHeight: 25,
@@ -1204,6 +1216,7 @@ const styles = StyleSheet.create({
   },
 
   notebookPointText: {
+    color: onCard,
     flex: 1,
     minWidth: 0,
     fontSize: 14,
@@ -1366,6 +1379,7 @@ const styles = StyleSheet.create({
   },
 
   examText: {
+    color: onCard,
     flex: 1,
     minWidth: 0,
     fontSize: 14,
@@ -1413,6 +1427,7 @@ const styles = StyleSheet.create({
   },
 
   assignmentText: {
+    color: onCard,
     width: '100%',
     fontSize: 14,
     lineHeight: 22,
