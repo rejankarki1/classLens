@@ -156,3 +156,49 @@ export async function getMaterialUrl(material: Material, expiresInSeconds = 3600
     return null;
   }
 }
+
+/** Copy actual photo objects using existing staged-material grants. Deterministic
+ * IDs let retries finish a partial copy without inserting another notebook/photo. */
+export async function copyLectureMaterials(sourceId: string, targetId: string): Promise<void> {
+  const originals = await getMaterials(sourceId);
+  if (originals.some((material) => material.type !== 'photo')) {
+    throw new Error('Only photo material copies are supported.');
+  }
+  const { supabase } = await import('@/lib/supabase');
+  const { digestStringAsync, CryptoDigestAlgorithm } = await import('expo-crypto');
+  const bucket = supabase.storage.from(bucketName);
+  for (const original of originals) {
+    const hash = await digestStringAsync(CryptoDigestAlgorithm.SHA256, `${targetId}:${original.id}`);
+    const id = `${hash.slice(0, 8)}-${hash.slice(8, 12)}-4${hash.slice(13, 16)}-a${hash.slice(17, 20)}-${hash.slice(20, 32)}`;
+    const extension = original.filePath.split('.').pop();
+    if (!extension || !Object.values(extensions).includes(extension)) throw new Error('Unsupported source photo format.');
+    const storagePath = `materials/${id}/photo.${extension}`;
+    const read = () => supabase.from('materials').select(materialColumns).eq('id', id)
+      .returns<MaterialRow[]>().maybeSingle();
+    let { data: row, error: readError } = await read();
+    if (readError) throw new Error(`Could not verify copied photo: ${readError.message}`);
+    if (!row) {
+      const { error: copyError } = await bucket.copy(original.filePath, storagePath);
+      if (copyError) {
+        // Only an existing, readable destination permits resuming registration.
+        const { data: existing, error } = await bucket.download(storagePath);
+        if (error || !existing) throw new Error(`Could not copy photo: ${copyError.message}`);
+      }
+      const { error: insertError } = await supabase.from('materials').insert({ id, type: 'photo', storage_path: storagePath });
+      const result = await read();
+      row = result.data;
+      if (!row) throw new Error(`Could not register copied photo: ${insertError?.message ?? result.error?.message ?? 'Try again.'}`);
+    }
+    if (row.storage_path !== storagePath || (row.lecture_id !== null && row.lecture_id !== targetId)) {
+      throw new Error('Copied material association does not match this notebook.');
+    }
+    if (row.lecture_id === null) {
+      try {
+        await attachMaterialToLecture(id, targetId);
+      } catch (error) {
+        const result = await read();
+        if (result.data?.lecture_id !== targetId) throw error;
+      }
+    }
+  }
+}

@@ -17,7 +17,7 @@ import { matchCourse } from '@/features/courses/matchCourse';
 import { analyzeMaterial } from '@/services/ai';
 import { createCourse, getCourse, getCourses } from '@/services/courses';
 import { createLecture } from '@/services/lectures';
-import { attachMaterialToLecture, uploadMaterial } from '@/services/materials';
+import { attachMaterialToLecture, getMaterials, uploadMaterial } from '@/services/materials';
 import type { Course, LectureAnalysis, Material } from '@/types';
 
 type Stage = 'uploading' | 'analyzing' | 'organizing' | 'saving' | 'done';
@@ -187,7 +187,16 @@ export default function ProcessingScreen() {
 
         // Attach only after the lecture exists, and only while still staged.
         if (material.current.lectureId === null) {
-          material.current = await attachMaterialToLecture(material.current.id, savedLectureId.current);
+          try {
+            material.current = await attachMaterialToLecture(material.current.id, savedLectureId.current);
+          } catch (error) {
+            // A lost response may hide a successful attachment. Never accept another lecture.
+            const attached = (await getMaterials(savedLectureId.current)).find(
+              (entry) => entry.id === material.current?.id && entry.lectureId === savedLectureId.current
+            );
+            if (!attached) throw error;
+            material.current = attached;
+          }
         }
 
         setStage('done');

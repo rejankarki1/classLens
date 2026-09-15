@@ -66,26 +66,6 @@ export function CaptureModeSheet({
               onPress={() => onSelect('photo')}
             />
 
-            <CaptureTile
-              icon="▶"
-              title="Video"
-              detail="Demonstrations & explanations"
-              onPress={() => onSelect('video')}
-            />
-
-            <CaptureTile
-              icon="◉"
-              title="Audio"
-              detail="Lectures & discussions"
-              onPress={() => onSelect('audio')}
-            />
-
-            <CaptureTile
-              icon="↥"
-              title="Files"
-              detail="PDFs, slides & documents"
-              onPress={() => onSelect('file')}
-            />
           </View>
 
           <Pressable

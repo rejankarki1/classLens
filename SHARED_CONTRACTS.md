@@ -160,8 +160,17 @@ and stay readable by everyone as shared demo content; new lectures are owned by
 their creator. Authenticated users read demo lectures, their own, and those of
 accepted friends, enforced in the database rather than the UI. Catch Up lists
 accepted friends' lectures and copies one into your own notebook as a new
-lecture owned by you; the original is never modified and materials are not
-copied, so an original capture stays with its owner.
+lecture owned by you. The original is never modified. Copies retain the source
+course and all saved AI fields; actual photo objects are copied into new staged
+materials and attached to the copied lecture using the existing schema. Stable
+copy IDs let retries resume after partial failure. Success is reported only after
+all photos are attached; the UI opens the returned copied lecture ID. An optional
+courseId argument is accepted only when it matches the source course.
+
+The verified Prashant demo is lecture demo-prashant-lecture in cs-2325 (CS 2325,
+Computer Organization), with photo a3bdac54-d050-40e7-a934-0a3dc5bb7172. Its data
+repair restores the existing seed analysis and grants authenticated reads of this
+specific demo before a friendship is accepted; no new source lecture is created.
 
 ### Reading original materials
 

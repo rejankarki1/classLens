@@ -1,5 +1,7 @@
 import {
   Animated,
+  Image,
+  ScrollView,
   Modal,
   Pressable,
   StyleSheet,
@@ -19,7 +21,6 @@ import {
 } from 'react';
 
 import { AddFriendSheet } from '@/components/AddFriendSheet';
-import { PickCourseSheet } from '@/components/PickCourseSheet';
 import { getInitials } from '@/features/profile/initials';
 import { ClassLensLogo } from '@/components/ClassLensLogo';
 import { ThemedText } from '@/components/themed-text';
@@ -27,9 +28,8 @@ import { Screen } from '@/components/ui/Screen';
 
 import { getCourses } from '@/services/courses';
 import { copyLectureToMyNotes, getLecture, getLecturesByOwners } from '@/services/lectures';
-import type { SharedLecture } from '@/services/lectures';
 import { getFriends, getProfileById } from '@/services/friends';
-import { getCurrentUserId } from '@/services/auth';
+import { getMaterials, getMaterialUrl } from '@/services/materials';
 
 import { Brand, Colors, Fonts } from '@/constants/theme';
 
@@ -53,6 +53,7 @@ type CatchupItem = {
   course?: Course;
   /** The classmate whose notebook this came from. */
   sharedBy?: Profile;
+  photos: { id: string; url: string | null }[];
 };
 
 export default function CatchupMateScreen() {
@@ -65,8 +66,9 @@ export default function CatchupMateScreen() {
   const [sheetOpen, setSheetOpen] =
     useState(false);
 
-  const [added, setAdded] =
-    useState(false);
+  const [copied, setCopied] = useState<Lecture | null>(null);
+  const [copyError, setCopyError] = useState<string | null>(null);
+  const added = copied !== null;
 
   const [error, setError] =
     useState(false);
@@ -83,8 +85,6 @@ export default function CatchupMateScreen() {
   const [adding, setAdding] =
     useState(false);
 
-  const [pickOpen, setPickOpen] =
-    useState(false);
 
   useFocusEffect(
     useCallback(() => {
@@ -94,7 +94,7 @@ export default function CatchupMateScreen() {
         try {
           setLoading(true);
           setError(false);
-          setAdded(false);
+
 
           // Catch Up surfaces what accepted classmates shared, never your own
           // notebooks. Friend lookups need a session, so they can fail outright
@@ -118,20 +118,19 @@ export default function CatchupMateScreen() {
 
           if (!active) return;
 
-          let lecture: Lecture | null =
-            shared.find((entry) => entry.courseId) ?? null;
-          let owner = lecture
-            ? accepted.find((friend) => friend.id === (lecture as SharedLecture).ownerId)
-            : undefined;
-
-          // Demo fallback: the seeded classmate's lecture is readable even when
-          // the friend query returned nothing, so the demo always has an item.
-          if (!lecture) {
-            lecture = await getLecture(demoLectureId);
-            if (!active) return;
-            if (lecture) owner = (await getProfileById(demoOwnerId)) ?? undefined;
-            if (!active) return;
+          // Use the verified photo-backed Assembly demo, never the CS 3358
+          // placeholder. The migration restores this existing row from seed.
+          let lecture = await getLecture(demoLectureId);
+          let owner = lecture ? (await getProfileById(demoOwnerId)) ?? undefined : undefined;
+          if (lecture && lecture.courseId !== 'cs-2325') {
+            throw new Error('Assembly demo data has not been repaired yet.');
           }
+          if (!lecture) {
+            const friendLecture = shared.find((entry) => entry.ownerId !== demoOwnerId);
+            lecture = friendLecture ?? null;
+            owner = accepted.find((friend) => friend.id === friendLecture?.ownerId);
+          }
+          if (!active) return;
 
           if (!lecture) {
             setItem(null);
@@ -141,7 +140,11 @@ export default function CatchupMateScreen() {
           const courses = await getCourses();
           if (!active) return;
 
+          const materials = await getMaterials(lecture.id);
+          const photos = await Promise.all(materials.filter((material) => material.type === 'photo').map(async (material) => ({ id: material.id, url: await getMaterialUrl(material) })));
+          if (!active) return;
           setItem({
+            photos,
             lecture,
             course: courses.find(
               (course) => course.id === lecture?.courseId
@@ -164,25 +167,18 @@ export default function CatchupMateScreen() {
       return () => {
         active = false;
       };
-    }, [])
+    }, [reload])
   );
 
-  function addToMyNotes() {
+  async function addToMyNotes() {
     if (!item || added || adding) return;
-    setPickOpen(true);
-  }
-
-  async function saveToCourse(course: Course) {
-    if (!item || adding) return;
     setAdding(true);
+    setCopyError(null);
     try {
-      // Creates your own copy; the classmate's original is untouched.
-      await copyLectureToMyNotes(item.lecture.id, course.id);
-      setAdded(true);
-      setPickOpen(false);
-    } catch {
-      setError(true);
-      setPickOpen(false);
+      const lecture = await copyLectureToMyNotes(item.lecture.id);
+      setCopied(lecture);
+    } catch (error) {
+      setCopyError(error instanceof Error ? error.message : 'Could not add these notes. Try again.');
     } finally {
       setAdding(false);
     }
@@ -355,7 +351,7 @@ export default function CatchupMateScreen() {
         <Step
           number="04"
           title="ClassLens organizes it"
-          body="Your copy can be analyzed into structured notes, concepts, and study material."
+          body="Your copy keeps the saved notes, concepts, and original lecture photo."
         />
       </View>
 
@@ -364,18 +360,12 @@ export default function CatchupMateScreen() {
         item={item}
         added={added}
         busy={adding}
+        copiedId={copied?.id}
+        copyError={copyError}
         onClose={() =>
           setSheetOpen(false)
         }
         onAdd={addToMyNotes}
-      />
-
-      <PickCourseSheet
-        visible={pickOpen}
-        initialCourseId={item?.course?.id}
-        busy={adding}
-        onClose={() => setPickOpen(false)}
-        onConfirm={saveToCourse}
       />
 
       <AddFriendSheet
@@ -520,7 +510,7 @@ function CatchupAlert({
               style={styles.missedDescription}
               numberOfLines={2}
             >
-              Shared by a classmate in {courseCode}
+              Shared by {item?.sharedBy?.name ?? 'a classmate'} · {courseCode} · {item?.course?.name}
             </ThemedText>
           </View>
 
@@ -543,6 +533,8 @@ function CatchupSheet({
   item,
   added,
   busy,
+  copiedId,
+  copyError,
   onClose,
   onAdd,
 }: {
@@ -550,6 +542,8 @@ function CatchupSheet({
   item: CatchupItem | null;
   added: boolean;
   busy: boolean;
+  copiedId?: string;
+  copyError: string | null;
   onClose: () => void;
   onAdd: () => void;
 }) {
@@ -561,11 +555,7 @@ function CatchupSheet({
     item?.course?.name ??
     'Shared lecture';
 
-  const concepts =
-    item?.lecture.keyConcepts.slice(
-      0,
-      3
-    ) ?? [];
+  const concepts = item?.lecture.keyConcepts ?? [];
 
   return (
     <Modal
@@ -585,12 +575,13 @@ function CatchupSheet({
             event.stopPropagation()
           }
         >
+          <ScrollView showsVerticalScrollIndicator contentContainerStyle={{ paddingBottom: 12 }}>
           <View style={styles.handle} />
 
           <View style={styles.sheetHeader}>
             <View style={styles.sheetHeaderCopy}>
               <ThemedText style={styles.sheetTitle}>
-                Catch-up available
+                {item?.lecture.title ?? 'Catch-up available'}
               </ThemedText>
 
               <View style={styles.coursePill}>
@@ -655,35 +646,15 @@ function CatchupSheet({
             </View>
           </View>
 
-          <View style={styles.thumbGrid}>
-            {[
-              '01',
-              '02',
-              '03',
-              '04',
-              '05',
-              '06',
-            ].map(
-              (number) => (
-                <View
-                  key={number}
-                  style={styles.thumb}
-                >
-                  <ThemedText
-                    style={styles.thumbIcon}
-                  >
-                    ▤
-                  </ThemedText>
-
-                  <ThemedText
-                    allowFontScaling={false}
-                    style={styles.thumbNumber}
-                  >
-                    {number}
-                  </ThemedText>
-                </View>
-              )
-            )}
+          {item?.photos.map((photo) => photo.url ? (
+            <Image key={photo.id} source={{ uri: photo.url }} resizeMode="contain"
+              accessibilityLabel="Original shared lecture notes photo" style={styles.originalPhoto} />
+          ) : (
+            <ThemedText key={photo.id} style={styles.onCardMuted}>Photo temporarily unavailable. Reopen to retry.</ThemedText>
+          ))}
+          <View style={styles.coveredCard}>
+            <ThemedText style={styles.coveredTitle}>Summary</ThemedText>
+            <ThemedText style={styles.onCardMuted}>{item?.lecture.summary}</ThemedText>
           </View>
 
           <View style={styles.coveredCard}>
@@ -725,6 +696,13 @@ function CatchupSheet({
             </View>
           </View>
 
+          <View style={styles.coveredCard}>
+            <ThemedText style={styles.coveredTitle}>Important points</ThemedText>
+            {item?.lecture.importantPoints.map((point, index) => (
+              <ThemedText key={index} style={styles.onCardMuted}>• {point}</ThemedText>
+            ))}
+          </View>
+          {copyError ? <ThemedText accessibilityRole="alert" style={styles.onCardMuted}>{copyError}</ThemedText> : null}
           <Pressable
             accessibilityRole="button"
             accessibilityState={{ disabled: added || busy, busy }}
@@ -767,7 +745,7 @@ function CatchupSheet({
                     '/lecture/[id]',
                   params: {
                     id:
-                      item.lecture.id,
+                      copiedId ?? item.lecture.id,
                   },
                 });
               }}
@@ -780,7 +758,7 @@ function CatchupSheet({
               <ThemedText
                 style={styles.openNotebookText}
               >
-                Open catch-up notebook →
+                {copiedId ? 'Open My Notes →' : 'Open Assembly lecture →'}
               </ThemedText>
             </Pressable>
           ) : null}
@@ -800,6 +778,7 @@ function CatchupSheet({
               CatchupMate sharing should only surface material from classmates who have opted into course sharing.
             </ThemedText>
           </View>
+          </ScrollView>
         </Pressable>
       </Pressable>
     </Modal>
@@ -1407,37 +1386,12 @@ const styles = StyleSheet.create({
     fontWeight: '800',
   },
 
-  thumbGrid: {
+  originalPhoto: {
     width: '100%',
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
+    aspectRatio: 0.75,
     marginTop: 15,
-  },
-
-  thumb: {
-    width: '31%',
-    aspectRatio: 0.78,
     borderRadius: 11,
     backgroundColor: '#E7EBE4',
-    borderWidth: 1,
-    borderColor: '#C7CEC4',
-    alignItems: 'center',
-    justifyContent: 'center',
-    position: 'relative',
-  },
-
-  thumbIcon: {
-    color: '#6B776D',
-    fontSize: 22,
-  },
-
-  thumbNumber: {
-    position: 'absolute',
-    right: 7,
-    bottom: 6,
-    color: '#717971',
-    fontSize: 9,
   },
 
   coveredCard: {

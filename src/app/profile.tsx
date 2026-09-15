@@ -53,7 +53,7 @@ export default function ProfileScreen() {
       <View style={styles.profileHeader}>
         <View style={styles.avatar}>
           <ThemedText style={styles.avatarText}>
-            PB
+            {getInitials(profile?.name ?? '') || '·'}
           </ThemedText>
         </View>
 

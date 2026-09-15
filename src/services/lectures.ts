@@ -121,23 +121,29 @@ export async function getLecturesByOwners(ownerIds: string[]): Promise<SharedLec
   return data.map((row) => ({ ...fromRow(row), ownerId: row.owner_id }));
 }
 
-/**
- * Catch Up: copy a classmate's shared lecture into your own notebook. The
- * original is never modified; this inserts a new lecture owned by you.
- * Materials are not copied: the original capture stays with its owner.
- */
+/** Copy saved analysis and real captures; retries resume the same user's copy. */
 export async function copyLectureToMyNotes(lectureId: string, courseId?: string): Promise<Lecture> {
   if (getDataMode() !== 'supabase') throw new Error('Catch Up requires EXPO_PUBLIC_DATA_MODE=supabase.');
+  const { supabase } = await import('@/lib/supabase');
+  const { copyLectureMaterials } = await import('./materials');
+  const { data: auth, error: authError } = await supabase.auth.getUser();
+  if (authError || !auth.user) throw new Error('Sign in to add these notes.');
   const source = await getLecture(lectureId);
   if (!source) throw new Error('That shared lecture is no longer available.');
-  return createLecture({
-    // The student picks where it lands; otherwise it keeps the original course.
-    courseId: courseId ?? source.courseId,
-    title: source.title,
-    summary: source.summary,
-    keyConcepts: source.keyConcepts,
-    importantPoints: source.importantPoints,
-    assignments: source.assignments,
-    examMentions: source.examMentions,
-  });
+  if (courseId && courseId !== source.courseId) throw new Error('Shared notes must stay in their matching course.');
+  const id = `catchup:${auth.user.id}:${source.id}`;
+  let saved = await getLecture(id);
+  if (!saved) {
+    const { data, error } = await supabase.from('lectures').insert({
+      id, owner_id: auth.user.id, course_id: source.courseId,
+      title: source.title, summary: source.summary,
+      key_concepts: source.keyConcepts, important_points: source.importantPoints,
+      assignments: source.assignments, exam_mentions: source.examMentions,
+    }).select(lectureColumns).returns<LectureRow[]>().single();
+    // Recover a concurrent insert or a committed insert with a lost response.
+    saved = data ? fromRow(data) : await getLecture(id);
+    if (!saved) throw new Error(`Could not copy lecture: ${error?.message ?? 'No saved lecture returned.'}`);
+  }
+  await copyLectureMaterials(source.id, saved.id);
+  return saved;
 }
