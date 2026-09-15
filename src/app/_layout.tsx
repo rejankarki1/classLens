@@ -3,15 +3,92 @@ import {
   DefaultTheme,
   Stack,
   ThemeProvider,
+  router,
+  useRootNavigationState,
+  useSegments,
 } from 'expo-router';
+
+import { useEffect, useState } from 'react';
+import { ActivityIndicator, View } from 'react-native';
 
 import { StatusBar } from 'expo-status-bar';
 
 import { useTheme } from '@/hooks/use-theme';
 import { Brand } from '@/constants/theme';
+import { getCurrentUserId, getMyProfile, onAuthChange } from '@/services/auth';
+
+const authRoutes = ['login', 'signup'];
+
+/**
+ * Session-based gate: signed out goes to login, signed in without a completed
+ * profile goes to onboarding, and everyone else reaches the app. The session is
+ * persisted by the Supabase client, so reopening the app does not ask again.
+ */
+function useAuthGate() {
+  const segments = useSegments();
+  const navigationState = useRootNavigationState();
+  const [userId, setUserId] = useState<string | null>(null);
+  const [hasProfile, setHasProfile] = useState<boolean | null>(null);
+  const [ready, setReady] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+
+    async function resolve(id: string | null) {
+      if (!id) {
+        if (active) {
+          setUserId(null);
+          setHasProfile(null);
+          setReady(true);
+        }
+        return;
+      }
+      let profile = null;
+      try {
+        profile = await getMyProfile();
+      } catch {
+        // Treat an unreadable profile as missing so onboarding can retry.
+      }
+      if (active) {
+        setUserId(id);
+        setHasProfile(profile !== null);
+        setReady(true);
+      }
+    }
+
+    void getCurrentUserId().then(resolve);
+
+    let unsubscribe: (() => void) | undefined;
+    void onAuthChange((id) => { void resolve(id); }).then((off) => {
+      if (active) unsubscribe = off; else off();
+    });
+
+    return () => { active = false; unsubscribe?.(); };
+  }, []);
+
+  useEffect(() => {
+    // Routing before the navigator mounts throws, so wait for both.
+    if (!ready || !navigationState?.key) return;
+
+    const section = segments[0] ?? '';
+    const inAuth = authRoutes.includes(section);
+    const inOnboarding = section === 'onboarding';
+
+    if (!userId) {
+      if (!inAuth) router.replace('/login');
+    } else if (hasProfile === false) {
+      if (!inOnboarding) router.replace('/onboarding');
+    } else if (inAuth || inOnboarding) {
+      router.replace('/');
+    }
+  }, [ready, userId, hasProfile, segments, navigationState?.key]);
+
+  return ready;
+}
 
 export default function RootLayout() {
   const theme = useTheme();
+  const ready = useAuthGate();
   const dark = theme.background !== Brand.paper;
   const navigationTheme = dark ? DarkTheme : DefaultTheme;
 
@@ -29,6 +106,12 @@ export default function RootLayout() {
       }}
     >
       <StatusBar style={dark ? 'light' : 'dark'} />
+
+      {ready ? null : (
+        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: theme.background }}>
+          <ActivityIndicator color={theme.text} accessibilityLabel="Opening ClassLens" />
+        </View>
+      )}
 
       <Stack
         screenOptions={{

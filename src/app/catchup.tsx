@@ -18,18 +18,22 @@ import {
   useState,
 } from 'react';
 
+import { AddFriendSheet } from '@/components/AddFriendSheet';
 import { ClassLensLogo } from '@/components/ClassLensLogo';
 import { ThemedText } from '@/components/themed-text';
 import { Screen } from '@/components/ui/Screen';
 
 import { getCourses } from '@/services/courses';
-import { getLectures } from '@/services/lectures';
+import { copyLectureToMyNotes, getLecturesByOwners } from '@/services/lectures';
+import { getFriends } from '@/services/friends';
+import { getCurrentUserId } from '@/services/auth';
 
 import { Brand, Fonts } from '@/constants/theme';
 
 import type {
   Course,
   Lecture,
+  Profile,
 } from '@/types';
 
 type CatchupItem = {
@@ -53,6 +57,18 @@ export default function CatchupMateScreen() {
   const [error, setError] =
     useState(false);
 
+  const [friends, setFriends] =
+    useState<Profile[]>([]);
+
+  const [friendOpen, setFriendOpen] =
+    useState(false);
+
+  const [reload, setReload] =
+    useState(0);
+
+  const [adding, setAdding] =
+    useState(false);
+
   useFocusEffect(
     useCallback(() => {
       let active = true;
@@ -61,41 +77,42 @@ export default function CatchupMateScreen() {
         try {
           setLoading(true);
           setError(false);
+          setAdded(false);
 
-          const courses =
-            await getCourses();
+          // Catch Up surfaces what accepted classmates shared, never your own
+          // notebooks, so with no friends yet there is nothing to catch up on.
+          const [accepted, me] = await Promise.all([
+            getFriends(),
+            getCurrentUserId(),
+          ]);
 
-          const results =
-            await Promise.allSettled(
-              courses.map(async (course) => {
-                const lectures =
-                  await getLectures(course.id);
+          if (!active) return;
+          setFriends(accepted);
 
-                return lectures.map(
-                  (lecture) => ({
-                    lecture,
-                    course,
-                  })
-                );
-              })
-            );
+          const shared = await getLecturesByOwners(
+            accepted.map((friend) => friend.id)
+          );
 
           if (!active) return;
 
-          const all =
-            results
-              .flatMap((result) =>
-                result.status === 'fulfilled'
-                  ? result.value
-                  : []
-              )
-              .sort((a, b) =>
-                b.lecture.createdAt.localeCompare(
-                  a.lecture.createdAt
-                )
-              );
+          const newest = shared.find(
+            (lecture: Lecture) => lecture.courseId
+          );
 
-          setItem(all[0] ?? null);
+          if (!newest || !me) {
+            setItem(null);
+            return;
+          }
+
+          const courses = await getCourses();
+          if (!active) return;
+
+          setItem({
+            lecture: newest,
+            course: courses.find(
+              (course) => course.id === newest.courseId
+            ),
+          });
         } catch {
           if (active) {
             setError(true);
@@ -114,6 +131,20 @@ export default function CatchupMateScreen() {
       };
     }, [])
   );
+
+  async function addToMyNotes() {
+    if (!item || added || adding) return;
+    setAdding(true);
+    try {
+      // Creates your own copy; the classmate's original is untouched.
+      await copyLectureToMyNotes(item.lecture.id);
+      setAdded(true);
+    } catch {
+      setError(true);
+    } finally {
+      setAdding(false);
+    }
+  }
 
   return (
     <Screen showBottomNav>
@@ -160,8 +191,8 @@ export default function CatchupMateScreen() {
       <Pressable
         accessibilityRole="button"
         accessibilityLabel="Add CatchUp Friend"
-        accessibilityHint="CatchUp Friend sharing is coming soon"
-        onPress={() => {}}
+        accessibilityHint="Search classmates and send a friend request"
+        onPress={() => setFriendOpen(true)}
         style={({ pressed }) => [
           styles.friendCard,
           pressed && styles.friendCardPressed,
@@ -196,7 +227,9 @@ export default function CatchupMateScreen() {
                 allowFontScaling={false}
                 style={styles.soonBadgeText}
               >
-                SOON
+                {friends.length
+                  ? `${friends.length} FRIEND${friends.length === 1 ? '' : 'S'}`
+                  : 'ADD'}
               </ThemedText>
             </View>
           </View>
@@ -206,7 +239,9 @@ export default function CatchupMateScreen() {
             themeColor="textSecondary"
             style={styles.friendDescription}
           >
-            Connect with a classmate who can share notes when you miss class.
+            {friends.length
+              ? `Sharing with ${friends.map((friend) => friend.name).join(', ')}.`
+              : 'Connect with a classmate who can share notes when you miss class.'}
           </ThemedText>
         </View>
 
@@ -287,11 +322,18 @@ export default function CatchupMateScreen() {
         visible={sheetOpen}
         item={item}
         added={added}
+        busy={adding}
         onClose={() =>
           setSheetOpen(false)
         }
-        onAdd={() =>
-          setAdded(true)
+        onAdd={addToMyNotes}
+      />
+
+      <AddFriendSheet
+        visible={friendOpen}
+        onClose={() => setFriendOpen(false)}
+        onChanged={() =>
+          setReload((value) => value + 1)
         }
       />
     </Screen>
@@ -451,12 +493,14 @@ function CatchupSheet({
   visible,
   item,
   added,
+  busy,
   onClose,
   onAdd,
 }: {
   visible: boolean;
   item: CatchupItem | null;
   added: boolean;
+  busy: boolean;
   onClose: () => void;
   onAdd: () => void;
 }) {
@@ -634,12 +678,14 @@ function CatchupSheet({
 
           <Pressable
             accessibilityRole="button"
+            accessibilityState={{ disabled: added || busy, busy }}
+            disabled={added || busy}
             onPress={onAdd}
             style={({ pressed }) => [
               styles.primaryButton,
               added &&
                 styles.primaryButtonAdded,
-              pressed &&
+              (pressed || busy) &&
                 styles.pressed,
             ]}
           >
@@ -648,7 +694,9 @@ function CatchupSheet({
             >
               {added
                 ? '✓ Added to My Notes'
-                : '+ Add to My Notes'}
+                : busy
+                  ? 'Adding…'
+                  : '+ Add to My Notes'}
             </ThemedText>
           </Pressable>
 

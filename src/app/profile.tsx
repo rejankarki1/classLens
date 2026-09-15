@@ -1,3 +1,6 @@
+import { useCallback, useState } from 'react';
+import { useFocusEffect } from 'expo-router';
+
 import {
   Pressable,
   StyleSheet,
@@ -11,7 +14,40 @@ import { Screen } from '@/components/ui/Screen';
 
 import { Brand, Fonts } from '@/constants/theme';
 
+import { getMyProfile, signOut } from '@/services/auth';
+import type { Profile } from '@/types';
+
+function initials(name: string): string {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  if (!parts.length) return '··';
+  return (parts[0][0] + (parts[1]?.[0] ?? '')).toUpperCase();
+}
+
 export default function ProfileScreen() {
+  const [profile, setProfile] = useState<Profile | null>(null);
+  const [signingOut, setSigningOut] = useState(false);
+
+  useFocusEffect(
+    useCallback(() => {
+      let active = true;
+      getMyProfile()
+        .then((data) => { if (active) setProfile(data); })
+        .catch(() => { if (active) setProfile(null); });
+      return () => { active = false; };
+    }, [])
+  );
+
+  async function leave() {
+    if (signingOut) return;
+    setSigningOut(true);
+    try {
+      // The root layout returns to login once the session clears.
+      await signOut();
+    } catch {
+      setSigningOut(false);
+    }
+  }
+
   return (
     <Screen showBottomNav>
       <View style={styles.header}>
@@ -37,8 +73,8 @@ export default function ProfileScreen() {
         </View>
       </View>
 
-      <ProfileRow label="CLASSIFICATION" value="Not selected" />
-      <ProfileRow label="MAJOR" value="Not added" />
+      <ProfileRow label="CLASSIFICATION" value={profile?.year ?? 'Not selected'} />
+      <ProfileRow label="MAJOR" value={profile?.major ?? 'Not added'} />
       <ProfileRow label="UNIVERSITY" value="Not added" />
       <ProfileRow label="GRADUATION" value="Not added" />
 
@@ -53,6 +89,22 @@ export default function ProfileScreen() {
         <SettingRow title="Notifications" />
         <SettingRow title="Privacy" />
         <SettingRow title="Help & feedback" />
+
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Sign out"
+          accessibilityState={{ disabled: signingOut, busy: signingOut }}
+          disabled={signingOut}
+          onPress={leave}
+          style={({ pressed }) => [
+            styles.settingRow,
+            (pressed || signingOut) && styles.pressed,
+          ]}
+        >
+          <ThemedText style={[styles.settingTitle, styles.signOut]}>
+            {signingOut ? 'Signing out…' : 'Sign out'}
+          </ThemedText>
+        </Pressable>
       </View>
     </Screen>
   );
@@ -107,6 +159,11 @@ function SettingRow({
 }
 
 const styles = StyleSheet.create({
+  signOut: {
+    color: '#A14E4E',
+    fontWeight: '700',
+  },
+
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',

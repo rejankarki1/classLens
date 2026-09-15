@@ -88,12 +88,52 @@ export async function createLecture(input: CreateLectureInput): Promise<Lecture>
   const { randomUUID } = await import('expo-crypto');
   const { supabase } = await import('@/lib/supabase');
   const id = randomUUID();
+  // owner_id is what makes a lecture yours, and what Catch Up shares by.
+  const { data: auth } = await supabase.auth.getSession();
+  const ownerId = auth.session?.user.id;
+  if (!ownerId) throw new Error('You are signed out. Sign in and try again.');
   const { data, error } = await supabase.from('lectures').insert({
     id, course_id: input.courseId, title: input.title, summary: input.summary,
     key_concepts: input.keyConcepts, important_points: input.importantPoints,
     assignments: input.assignments, exam_mentions: input.examMentions,
+    owner_id: ownerId,
   }).select(lectureColumns).returns<LectureRow[]>().single();
   if (error) throw new Error(`Could not create lecture (attempted ID ${id}): ${error.message}`);
   if (!data) throw new Error(`No saved lecture was returned (attempted ID ${id}).`);
   return fromRow(data);
+}
+
+/** Catch Up: lectures shared by the given classmates, newest first. */
+export async function getLecturesByOwners(ownerIds: string[]): Promise<Lecture[]> {
+  if (getDataMode() !== 'supabase' || !ownerIds.length) return [];
+  const { supabase } = await import('@/lib/supabase');
+  const { data, error } = await supabase
+    .from('lectures')
+    .select(lectureColumns)
+    .in('owner_id', ownerIds)
+    .order('created_at', { ascending: false })
+    .order('id')
+    .returns<LectureRow[]>();
+  if (error) throw new Error(`Could not load shared lectures: ${error.message}`);
+  return data.map(fromRow);
+}
+
+/**
+ * Catch Up: copy a classmate's shared lecture into your own notebook. The
+ * original is never modified; this inserts a new lecture owned by you.
+ * Materials are not copied: the original capture stays with its owner.
+ */
+export async function copyLectureToMyNotes(lectureId: string): Promise<Lecture> {
+  if (getDataMode() !== 'supabase') throw new Error('Catch Up requires EXPO_PUBLIC_DATA_MODE=supabase.');
+  const source = await getLecture(lectureId);
+  if (!source) throw new Error('That shared lecture is no longer available.');
+  return createLecture({
+    courseId: source.courseId,
+    title: source.title,
+    summary: source.summary,
+    keyConcepts: source.keyConcepts,
+    importantPoints: source.importantPoints,
+    assignments: source.assignments,
+    examMentions: source.examMentions,
+  });
 }

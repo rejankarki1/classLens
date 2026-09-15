@@ -95,6 +95,21 @@ Dates are serialized strings; existing service records use ISO timestamps.
 ## Service contracts
 
 ```ts
+signUp(email, password): Promise<void>
+signIn(email, password): Promise<void>
+signOut(): Promise<void>
+getCurrentUserId(): Promise<string | null>
+onAuthChange(listener): Promise<() => void>
+getMyProfile(): Promise<Profile | null>
+saveMyProfile(input: ProfileInput): Promise<Profile>
+searchProfiles(query: string): Promise<Profile[]>
+getFriends(): Promise<Profile[]>
+getIncomingRequests(): Promise<FriendRequest[]>
+getFriendshipStates(): Promise<Map<string, 'pending' | 'accepted'>>
+sendFriendRequest(addresseeId: string): Promise<void>
+acceptFriendRequest(friendshipId: string): Promise<void>
+getLecturesByOwners(ownerIds: string[]): Promise<Lecture[]>
+copyLectureToMyNotes(lectureId: string): Promise<Lecture>
 getCourses(): Promise<Course[]>
 getCourse(id: string): Promise<Course | null>
 createCourse(input: CreateCourseInput): Promise<Course>
@@ -115,6 +130,38 @@ Course reads live in `services/courses.ts`; lecture reads/creation in
 Missing individual records return null; empty collections return []. Failures
 reject and must be handled by the UI. createLecture validates the course and persists in Supabase mode; mock mode stores data in memory only. Quiz generation invokes generate-quiz; Ask Lecture invokes ask-lecture. Photo analysis invokes the deployed analyze-material Edge Function. Photo uploads
 require Supabase mode and the photo Storage migration. Screens must not import mock fixtures directly.
+
+### Accounts, profiles and friends
+
+Authentication is Supabase Auth with email and password. Passwords and emails
+live in auth.users and are never copied into an application table, so friend
+search is by profile name only and auth.users is never exposed to a client.
+Auth lives in services/auth.ts and friendships in services/friends.ts.
+
+public.profiles holds id (references auth.users), name, year and major. Year is
+one of Freshman, Sophomore, Junior, Senior, Graduate. Any authenticated user can
+read profiles, which is what makes classmates findable, but may insert and update
+only their own row.
+
+public.friendships holds requester_id, addressee_id, status (pending or accepted)
+and created_at. A unique index over the ordered pair prevents duplicates in either
+direction, and a check constraint prevents adding yourself. A row is visible only
+to the two people in it. Only the requester may create one, status is not
+grantable so new rows are always pending, and only the addressee may move a
+pending row to accepted. No DELETE is granted.
+
+Every earlier policy targeted anon only. Signing in switches the client to the
+authenticated role, so the authenticated-access migration mirrors the existing
+anon rules for courses, materials and Storage. It is additive: no anon policy was
+dropped, so existing demo data keeps working.
+
+lectures.owner_id is a nullable reference to auth.users. Existing rows keep null
+and stay readable by everyone as shared demo content; new lectures are owned by
+their creator. Authenticated users read demo lectures, their own, and those of
+accepted friends, enforced in the database rather than the UI. Catch Up lists
+accepted friends' lectures and copies one into your own notebook as a new
+lecture owned by you; the original is never modified and materials are not
+copied, so an original capture stays with its owner.
 
 ### Reading original materials
 
