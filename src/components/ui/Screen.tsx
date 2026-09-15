@@ -18,18 +18,25 @@ import { useTheme } from '@/hooks/use-theme';
 type Props = PropsWithChildren<{
   footer?: ReactNode;
   showBottomNav?: boolean;
+  /**
+   * Opt in on screens that already show a native header. The header consumes
+   * the top inset, so applying it again here doubles the space above the first
+   * element. Off by default, so no existing screen moves.
+   */
+  headerAbove?: boolean;
 }>;
 
 export function Screen({
   children,
   footer,
   showBottomNav = false,
+  headerAbove = false,
 }: Props) {
   const theme = useTheme();
 
   return (
     <SafeAreaView
-      edges={['top', 'left', 'right', 'bottom']}
+      edges={headerAbove ? ['left', 'right', 'bottom'] : ['top', 'left', 'right', 'bottom']}
       style={[
         styles.safe,
         {

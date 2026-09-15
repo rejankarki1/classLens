@@ -133,7 +133,7 @@ export default function CaptureScreen() {
   }
 
   return (
-    <Screen>
+    <Screen headerAbove>
       <StatusBadge label="01 / CAPTURE" />
 
       <View style={styles.intro}>
