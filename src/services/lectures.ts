@@ -126,12 +126,13 @@ export async function getLecturesByOwners(ownerIds: string[]): Promise<SharedLec
  * original is never modified; this inserts a new lecture owned by you.
  * Materials are not copied: the original capture stays with its owner.
  */
-export async function copyLectureToMyNotes(lectureId: string): Promise<Lecture> {
+export async function copyLectureToMyNotes(lectureId: string, courseId?: string): Promise<Lecture> {
   if (getDataMode() !== 'supabase') throw new Error('Catch Up requires EXPO_PUBLIC_DATA_MODE=supabase.');
   const source = await getLecture(lectureId);
   if (!source) throw new Error('That shared lecture is no longer available.');
   return createLecture({
-    courseId: source.courseId,
+    // The student picks where it lands; otherwise it keeps the original course.
+    courseId: courseId ?? source.courseId,
     title: source.title,
     summary: source.summary,
     keyConcepts: source.keyConcepts,

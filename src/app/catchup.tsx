@@ -19,6 +19,7 @@ import {
 } from 'react';
 
 import { AddFriendSheet } from '@/components/AddFriendSheet';
+import { PickCourseSheet } from '@/components/PickCourseSheet';
 import { getInitials } from '@/features/profile/initials';
 import { ClassLensLogo } from '@/components/ClassLensLogo';
 import { ThemedText } from '@/components/themed-text';
@@ -29,7 +30,12 @@ import { copyLectureToMyNotes, getLecturesByOwners } from '@/services/lectures';
 import { getFriends } from '@/services/friends';
 import { getCurrentUserId } from '@/services/auth';
 
-import { Brand, Fonts } from '@/constants/theme';
+import { Brand, Colors, Fonts } from '@/constants/theme';
+
+// The sheet and its cards are painted a fixed cream, so text on them must use
+// the fixed dark palette. Inheriting theme.text turns them invisible in dark mode.
+const onCard = Colors.light.text;
+const onCardMuted = Colors.light.textSecondary;
 
 import type {
   Course,
@@ -70,6 +76,9 @@ export default function CatchupMateScreen() {
     useState(0);
 
   const [adding, setAdding] =
+    useState(false);
+
+  const [pickOpen, setPickOpen] =
     useState(false);
 
   useFocusEffect(
@@ -138,15 +147,22 @@ export default function CatchupMateScreen() {
     }, [])
   );
 
-  async function addToMyNotes() {
+  function addToMyNotes() {
     if (!item || added || adding) return;
+    setPickOpen(true);
+  }
+
+  async function saveToCourse(course: Course) {
+    if (!item || adding) return;
     setAdding(true);
     try {
       // Creates your own copy; the classmate's original is untouched.
-      await copyLectureToMyNotes(item.lecture.id);
+      await copyLectureToMyNotes(item.lecture.id, course.id);
       setAdded(true);
+      setPickOpen(false);
     } catch {
       setError(true);
+      setPickOpen(false);
     } finally {
       setAdding(false);
     }
@@ -242,7 +258,6 @@ export default function CatchupMateScreen() {
 
           <ThemedText
             type="small"
-            themeColor="textSecondary"
             style={styles.friendDescription}
           >
             {friends.length
@@ -268,7 +283,7 @@ export default function CatchupMateScreen() {
           </ThemedText>
 
           <ThemedText
-            themeColor="textSecondary"
+            style={styles.onCardMuted}
           >
             Looking for shared notes from your courses.
           </ThemedText>
@@ -280,7 +295,7 @@ export default function CatchupMateScreen() {
           </ThemedText>
 
           <ThemedText
-            themeColor="textSecondary"
+            style={styles.onCardMuted}
           >
             We couldn't load your catch-up information.
           </ThemedText>
@@ -333,6 +348,14 @@ export default function CatchupMateScreen() {
           setSheetOpen(false)
         }
         onAdd={addToMyNotes}
+      />
+
+      <PickCourseSheet
+        visible={pickOpen}
+        initialCourseId={item?.course?.id}
+        busy={adding}
+        onClose={() => setPickOpen(false)}
+        onConfirm={saveToCourse}
       />
 
       <AddFriendSheet
@@ -605,7 +628,7 @@ function CatchupSheet({
 
               <ThemedText
                 type="small"
-                themeColor="textSecondary"
+                style={styles.onCardMuted}
               >
                 Shared lecture material with your course
               </ThemedText>
@@ -708,7 +731,6 @@ function CatchupSheet({
 
           <ThemedText
             type="small"
-            themeColor="textSecondary"
             style={styles.copyNote}
           >
             This creates your own copy. Your edits won't affect the original shared notes.
@@ -753,7 +775,6 @@ function CatchupSheet({
 
             <ThemedText
               type="small"
-              themeColor="textSecondary"
               style={styles.consentText}
             >
               CatchupMate sharing should only surface material from classmates who have opted into course sharing.
@@ -802,6 +823,10 @@ function Step({
 }
 
 const styles = StyleSheet.create({
+  onCardMuted: {
+    color: onCardMuted,
+  },
+
   header: {
     width: '100%',
     minWidth: 0,
@@ -960,6 +985,7 @@ const styles = StyleSheet.create({
   },
 
   friendDescription: {
+    color: onCardMuted,
     flexShrink: 1,
     fontSize: 11,
     lineHeight: 16,
@@ -991,6 +1017,7 @@ const styles = StyleSheet.create({
   },
 
   loadingTitle: {
+    color: onCard,
     fontSize: 17,
     fontWeight: '700',
   },
@@ -1264,6 +1291,7 @@ const styles = StyleSheet.create({
   },
 
   sheetTitle: {
+    color: onCard,
     fontFamily: Fonts.serif,
     fontSize: 23,
     lineHeight: 30,
@@ -1313,6 +1341,7 @@ const styles = StyleSheet.create({
   },
 
   missedDateText: {
+    color: onCardMuted,
     flex: 1,
     minWidth: 0,
     fontSize: 13,
@@ -1353,6 +1382,7 @@ const styles = StyleSheet.create({
   },
 
   sharedByName: {
+    color: onCard,
     fontSize: 14,
     fontWeight: '800',
   },
@@ -1400,6 +1430,7 @@ const styles = StyleSheet.create({
   },
 
   coveredTitle: {
+    color: onCard,
     fontSize: 13,
     fontWeight: '900',
   },
@@ -1422,6 +1453,7 @@ const styles = StyleSheet.create({
   },
 
   topicChipText: {
+    color: onCard,
     flexShrink: 1,
     fontSize: 10,
     fontWeight: '700',
@@ -1449,6 +1481,7 @@ const styles = StyleSheet.create({
   },
 
   copyNote: {
+    color: onCardMuted,
     marginTop: 9,
     textAlign: 'center',
     lineHeight: 17,
@@ -1486,6 +1519,7 @@ const styles = StyleSheet.create({
   },
 
   consentText: {
+    color: onCardMuted,
     flex: 1,
     minWidth: 0,
     fontSize: 10,
