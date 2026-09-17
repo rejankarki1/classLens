@@ -16,6 +16,7 @@ import { StatusBar } from 'expo-status-bar';
 import { useTheme } from '@/hooks/use-theme';
 import { Brand } from '@/constants/theme';
 import { getCurrentUserId, getMyProfile, onAuthChange, onProfileChange } from '@/services/auth';
+import { hasEnrolledCourses, onEnrollmentChange } from '@/services/enrollment';
 
 const authRoutes = ['login', 'signup'];
 
@@ -29,6 +30,7 @@ function useAuthGate() {
   const navigationState = useRootNavigationState();
   const [userId, setUserId] = useState<string | null>(null);
   const [hasProfile, setHasProfile] = useState<boolean | null>(null);
+  const [hasEnrollment, setHasEnrollment] = useState<boolean | null>(null);
   const [ready, setReady] = useState(false);
 
   useEffect(() => {
@@ -39,6 +41,7 @@ function useAuthGate() {
         if (active) {
           setUserId(null);
           setHasProfile(null);
+          setHasEnrollment(null);
           setReady(true);
         }
         return;
@@ -49,9 +52,18 @@ function useAuthGate() {
       } catch {
         // Treat an unreadable profile as missing so onboarding can retry.
       }
+      let enrollment: boolean | null = null;
+      if (profile) {
+        try {
+          enrollment = await hasEnrolledCourses();
+        } catch {
+          // Keep the gate in its loading state rather than misrouting on a failed read.
+        }
+      }
       if (active) {
         setUserId(id);
         setHasProfile(profile !== null);
+        setHasEnrollment(enrollment);
         setReady(true);
       }
     }
@@ -62,31 +74,37 @@ function useAuthGate() {
     const stopProfileWatch = onProfileChange(() => {
       void getCurrentUserId().then(resolve);
     });
+    const stopEnrollmentWatch = onEnrollmentChange(() => {
+      void getCurrentUserId().then(resolve);
+    });
 
     let unsubscribe: (() => void) | undefined;
     void onAuthChange((id) => { void resolve(id); }).then((off) => {
       if (active) unsubscribe = off; else off();
     });
 
-    return () => { active = false; stopProfileWatch(); unsubscribe?.(); };
+    return () => { active = false; stopProfileWatch(); stopEnrollmentWatch(); unsubscribe?.(); };
   }, []);
 
   useEffect(() => {
     // Routing before the navigator mounts throws, so wait for both.
     if (!ready || !navigationState?.key) return;
 
-    const section = segments[0] ?? '';
+    const section: string = segments[0] ?? '';
     const inAuth = authRoutes.includes(section);
     const inOnboarding = section === 'onboarding';
+    const inCourseOnboarding = section === 'course-onboarding';
 
     if (!userId) {
       if (!inAuth) router.replace('/login');
     } else if (hasProfile === false) {
       if (!inOnboarding) router.replace('/onboarding');
-    } else if (inAuth || inOnboarding) {
+    } else if (hasEnrollment === false) {
+      if (!inCourseOnboarding) router.replace('/course-onboarding' as never);
+    } else if (hasEnrollment === true && (inAuth || inOnboarding || inCourseOnboarding)) {
       router.replace('/');
     }
-  }, [ready, userId, hasProfile, segments, navigationState?.key]);
+  }, [ready, userId, hasProfile, hasEnrollment, segments, navigationState?.key]);
 
   return ready;
 }
@@ -139,6 +157,14 @@ export default function RootLayout() {
           name="index"
           options={{
             title: 'ClassLens',
+            headerShown: false,
+          }}
+        />
+
+        <Stack.Screen
+          name="course-onboarding"
+          options={{
+            title: 'Choose courses',
             headerShown: false,
           }}
         />

@@ -14,7 +14,6 @@ import {
   useFocusEffect,
 } from 'expo-router';
 
-import { AddCourseSheet } from '@/components/AddCourseSheet';
 import { CourseCard } from '@/components/CourseCard';
 import { ClassLensLogo } from '@/components/ClassLensLogo';
 
@@ -29,7 +28,7 @@ import { ThemedText } from '@/components/themed-text';
 
 import { Brand, Fonts } from '@/constants/theme';
 
-import { getCourses } from '@/services/courses';
+import { getMyEnrolledCourses } from '@/services/enrollment';
 
 import type { Course } from '@/types';
 
@@ -38,7 +37,6 @@ export default function CoursesScreen() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
   const [attempt, setAttempt] = useState(0);
-  const [addOpen, setAddOpen] = useState(false);
 
   useFocusEffect(
     useCallback(() => {
@@ -47,7 +45,7 @@ export default function CoursesScreen() {
       setLoading(true);
       setError(false);
 
-      getCourses()
+      getMyEnrolledCourses()
         .then((data) => {
           if (active) {
             setCourses(data);
@@ -100,7 +98,7 @@ export default function CoursesScreen() {
         <Pressable
           accessibilityRole="button"
           accessibilityLabel="Add course"
-          onPress={() => setAddOpen(true)}
+          onPress={() => router.push('/course-onboarding' as never)}
           style={({ pressed }) => [
             styles.addButton,
             pressed && styles.pressed,
@@ -172,25 +170,6 @@ export default function CoursesScreen() {
         </ThemedText>
       </Pressable>
 
-      <AddCourseSheet
-        visible={addOpen}
-        onClose={() => setAddOpen(false)}
-        onCreated={(course) => {
-          // Show it straight away; createCourse is idempotent, so replace any
-          // existing row with the same ID rather than listing it twice.
-          setCourses((current) =>
-            [
-              course,
-              ...current.filter((item) => item.id !== course.id),
-            ].sort(
-              (a, b) =>
-                a.code.localeCompare(b.code) ||
-                a.id.localeCompare(b.id)
-            )
-          );
-          setError(false);
-        }}
-      />
     </Screen>
   );
 }

@@ -2,7 +2,6 @@ import { router, useFocusEffect } from "expo-router";
 import { useCallback, useState } from "react";
 import { Modal, Pressable, StyleSheet, View } from "react-native";
 
-import { AddCourseSheet } from "@/components/AddCourseSheet";
 import { ClassLensBrandMark } from "@/components/ClassLensBrandMark";
 import { CourseCard } from "@/components/CourseCard";
 import { LectureCard } from "@/components/LectureCard";
@@ -18,7 +17,7 @@ import { Screen } from "@/components/ui/Screen";
 import { Brand, Fonts } from "@/constants/theme";
 import { getInitials } from "@/features/profile/initials";
 import { getMyProfile } from "@/services/auth";
-import { getCourses } from "@/services/courses";
+import { getMyEnrolledCourses } from "@/services/enrollment";
 import { getLectures } from "@/services/lectures";
 import type { Course, Lecture, Profile } from "@/types";
 
@@ -35,7 +34,6 @@ export default function HomeScreen() {
 
   const [menuOpen, setMenuOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
-  const [addOpen, setAddOpen] = useState(false);
   const [profile, setProfile] = useState<Profile | null>(null);
 
   useFocusEffect(
@@ -51,7 +49,7 @@ export default function HomeScreen() {
         .then((data) => { if (active) setProfile(data); })
         .catch(() => { if (active) setProfile(null); });
 
-      getCourses()
+      getMyEnrolledCourses()
         .then(async (data) => {
           if (!active) return;
 
@@ -424,10 +422,10 @@ export default function HomeScreen() {
 
             <MenuItem
               title="Add course"
-              detail="Create a course to organize captures"
+              detail="Find or create a course"
               onPress={() => {
                 setMenuOpen(false);
-                setAddOpen(true);
+                router.push('/course-onboarding' as never);
               }}
             />
           </Pressable>
@@ -501,25 +499,6 @@ export default function HomeScreen() {
         </Pressable>
       </Modal>
 
-      <AddCourseSheet
-        visible={addOpen}
-        onClose={() => setAddOpen(false)}
-        onCreated={(course) => {
-          // Show it straight away; createCourse is idempotent, so replace any
-          // existing row with the same ID rather than listing it twice.
-          setCourses((current) =>
-            [
-              course,
-              ...current.filter((item) => item.id !== course.id),
-            ].sort(
-              (a, b) =>
-                a.code.localeCompare(b.code) ||
-                a.id.localeCompare(b.id)
-            )
-          );
-          setError(false);
-        }}
-      />
     </>
   );
 }

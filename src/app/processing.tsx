@@ -15,7 +15,8 @@ import { Brand, Fonts } from '@/constants/theme';
 
 import { matchCourse } from '@/features/courses/matchCourse';
 import { analyzeMaterial } from '@/services/ai';
-import { createCourse, getCourse, getCourses } from '@/services/courses';
+import { createCourse } from '@/services/courses';
+import { enrollInCourse, getMyEnrolledCourses } from '@/services/enrollment';
 import { createLecture } from '@/services/lectures';
 import { attachMaterialToLecture, getMaterials, uploadMaterial } from '@/services/materials';
 import type { Course, LectureAnalysis, Material } from '@/types';
@@ -146,11 +147,11 @@ export default function ProcessingScreen() {
         // suggestedCourse is a free-text label, never a course ID, and never creates a course.
         setStage('organizing');
         if (!course.current) {
+          const courses = await getMyEnrolledCourses();
           // A course chosen before capture wins over the analysis label.
-          if (courseId) course.current = await getCourse(courseId);
+          if (courseId) course.current = courses.find((candidate) => candidate.id === courseId) ?? null;
 
           if (!course.current) {
-            const courses = await getCourses();
             const matched = matchCourse(analysis.current.suggestedCourse, courses);
             if (!matched) {
               // An empty course list is the normal clean start, not an error:
@@ -235,6 +236,7 @@ export default function ProcessingScreen() {
     try {
       // Confirmed by the student, never created straight from the analysis.
       course.current = await createCourse({ code, name, professor: form.professor.trim() });
+      await enrollInCourse(course.current.id);
       tryAgain();
     } catch (caught) {
       setError(message(caught));
