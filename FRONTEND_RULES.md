@@ -1,60 +1,31 @@
-# ClassLens Frontend Rules
+# ClassLens frontend rules
 
-Read `AGENTS.md` and `SHARED_CONTRACTS.md` before changes. Verify the current
-branch is `frontend`; do not switch with uncommitted work. Follow the versioned
-Expo documentation requirement in AGENTS.md before writing code.
+Read `AGENTS.md`, `SHARED_CONTRACTS.md`, and the relevant section of
+`docs/CLASSLENS_IMPLEMENTATION_PLAN.md` before changes. The implementation plan is
+the authoritative product and milestone plan; `SHARED_CONTRACTS.md` is the
+operational contract source.
 
-## Ownership
+## Ownership and boundaries
 
-Own `src/app/`, `src/components/`, `src/features/`, `src/hooks/`,
-`src/constants/`, and `src/global.css`. Domain `types.ts` files are shared contracts,
-not freely editable frontend files. Read services/lib/types to understand the API.
-Do not edit `src/services/`, `src/lib/`, or `supabase/` unless explicitly authorized.
+Frontend owns `src/app/`, `src/components/`, `src/features/`, `src/hooks/`,
+`src/constants/`, and `src/global.css`. Domain `types.ts` files in
+`src/features/` are shared contracts. Read services, libraries, and public types
+to understand their APIs; edit backend-owned files only when the requested feature
+explicitly crosses that boundary.
 
-Before each task, report intended files, behavior, and whether shared files are
-affected. For shared changes, explain impact and obtain approval unless already
-authorized. The complete shared-file list is in SHARED_CONTRACTS.md.
+Use React Native, Expo SDK 57, TypeScript, Expo Router, and the established theme
+and component patterns. Keep components focused, preserve accessibility and
+keyboard behavior, and avoid unrelated redesigns or refactors.
 
-## Stack and boundaries
+Screens must use service functions rather than call Supabase directly or duplicate
+backend state. Preserve working screens and mock/demo flows until their real
+replacement is implemented and verified. Implement plan milestones incrementally
+for 10–20 users without deployment-scale overengineering.
 
-React Native, Expo SDK 57, TypeScript, Expo Router. Current styling is StyleSheet
-and shared light/dark theme helpers. NativeWind is deferred until approved and
-installed. Do not add dependencies, expo-image-picker, or expo-camera without
-approval. Keep Expo configuration and configured assets intact.
+Use `expo-background-task` for background work, never deprecated
+`expo-background-fetch`.
 
-Screens must call services, for example `await getLectures(courseId)`.
-Never place Supabase queries in screens or duplicate mock stores in the UI.
-Use existing mock services until backend replaces their implementations.
-
-## First milestone
-
-Inspect the existing screens and propose a short implementation order and exact
-files. Stop for approval before starting a new frontend milestone unless that
-implementation is already explicitly authorized.
-
-Polish these complete mock flows:
-
-- Home → CS 3358 → Binary Search Trees → lecture details.
-- Home → Capture → Try demo processing → sample lecture.
-
-Own dashboard/cards, course detail, capture/preview UI, processing feedback,
-lecture detail, future Ask Lecture/quiz UI, loading, empty/error states, and mobile
-polish. Capture buttons may remain placeholders. Processing must clearly identify
-mock activity, cancel timers on exit, and eventually support real backend state.
-
-Lecture UI should accommodate title, course, professor, date, summary, concepts,
-important points, assignments, exam mentions, materials, and question/quiz actions.
-Use empty states. Materials have no read service yet; coordinate that interface
-before integrating real material data. Do not add fields to Lecture silently.
-
-## Quality and handoff
-
-Keep components small, reusable UI in components, screen-specific logic in screens,
-TypeScript strict, and no any or duplicate types. Avoid unrelated refactors.
-After each feature run `npx tsc --noEmit`, report changes and manual tests, and keep
-changes commit-sized. Start Expo if generated route types need regeneration.
-Run existing lint tooling only if available; do not install it implicitly.
-
-Work through frontend PRs into main, then synchronize from origin/main. Example
-commit: `feat: polish course detail screen`. Do not implement database, storage,
-Gemini, or Edge Functions during frontend work.
+Before handoff, run `npx tsc --noEmit`, `git diff --check`, and relevant device
+tests for the feature. Report changed files, behavior, failures, and remaining
+manual verification. Do not commit, push, deploy, install packages, or change the
+remote Supabase project unless explicitly requested.
