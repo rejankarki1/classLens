@@ -13,6 +13,7 @@ import { ThemedText } from '@/components/themed-text';
 import { Screen } from '@/components/ui/Screen';
 import { Brand, Fonts } from '@/constants/theme';
 
+import { parseCaptureSession } from '@/features/capture/captureSession';
 import { matchCourse } from '@/features/courses/matchCourse';
 import { analyzeMaterial } from '@/services/ai';
 import { createCourse } from '@/services/courses';
@@ -58,9 +59,24 @@ export default function ProcessingScreen() {
     fileName?: string;
     mode?: string;
     courseId?: string;
+    captureSession?: string | string[];
   }>();
 
+  const sessionResult = useMemo(() => {
+    const raw = Array.isArray(params.captureSession) ? params.captureSession[0] : params.captureSession;
+    if (!raw) return { session: null, error: '' };
+    try {
+      return { session: parseCaptureSession(raw), error: '' };
+    } catch (caught) {
+      return {
+        session: null,
+        error: caught instanceof Error ? caught.message : 'The capture session is invalid.',
+      };
+    }
+  }, [params.captureSession]);
+
   const assets = useMemo(() => {
+    if (sessionResult.session) return sessionResult.session.photos.map((photo) => photo.uri);
     const raw = params.imageUris ?? params.imageUri;
 
     if (!raw) return [];
@@ -84,16 +100,19 @@ export default function ProcessingScreen() {
         return [value];
       })
       .filter(Boolean);
-  }, [params.imageUri, params.imageUris]);
+  }, [params.imageUri, params.imageUris, sessionResult.session]);
 
   const count = assets.length;
   const hasMaterial = count > 0 || Boolean(params.mode);
+  const multiPhotoPending = count > 1;
+  const invalidCaptureSession = Boolean(params.captureSession && sessionResult.error);
 
   // The analysis contract takes one photo per material, so the pipeline runs on
   // the first page. Extra pages are previewed but not sent.
-  const source = assets[0];
-  const mimeType = Array.isArray(params.mimeType) ? params.mimeType[0] : params.mimeType;
-  const fileName = Array.isArray(params.fileName) ? params.fileName[0] : params.fileName;
+  const sessionPhoto = sessionResult.session?.photos[0];
+  const source = sessionPhoto?.uri ?? assets[0];
+  const mimeType = sessionPhoto?.mimeType ?? (Array.isArray(params.mimeType) ? params.mimeType[0] : params.mimeType);
+  const fileName = sessionPhoto?.fileName ?? (Array.isArray(params.fileName) ? params.fileName[0] : params.fileName);
   const courseId = Array.isArray(params.courseId) ? params.courseId[0] : params.courseId;
 
   const [stage, setStage] = useState<Stage>('uploading');
@@ -125,6 +144,7 @@ export default function ProcessingScreen() {
   useEffect(() => {
     async function run() {
       if (inFlight.current) return;
+      if (multiPhotoPending || invalidCaptureSession) return;
       if (!source) return;
       inFlight.current = true;
       setError('');
@@ -213,7 +233,7 @@ export default function ProcessingScreen() {
     }
 
     void run();
-  }, [attempt, source, mimeType, fileName, courseId]);
+  }, [attempt, source, mimeType, fileName, courseId, multiPhotoPending, invalidCaptureSession]);
 
   function retry() {
     router.replace('/capture');
@@ -259,8 +279,12 @@ export default function ProcessingScreen() {
           </ThemedText>
 
           <ThemedText type="title" style={styles.title}>
-            {!hasMaterial
-              ? 'No lecture material found.'
+            {invalidCaptureSession
+              ? 'This capture session could not be opened.'
+              : !hasMaterial
+                ? 'No lecture material found.'
+                : multiPhotoPending
+                  ? `${count} photos are safely handed off.`
               : error
                 ? 'This didn’t come together.'
                 : picking
@@ -272,8 +296,12 @@ export default function ProcessingScreen() {
             themeColor="textSecondary"
             style={styles.subtitle}
           >
-            {!hasMaterial
-              ? 'Choose a photo, slide, recording, or file and try again.'
+            {invalidCaptureSession
+              ? sessionResult.error
+              : !hasMaterial
+                ? 'Choose a photo, slide, recording, or file and try again.'
+                : multiPhotoPending
+                  ? 'Every local photo reference reached Processing. Multi-photo upload and analysis arrive in Milestone 3, so none of these photos has been uploaded or analyzed yet.'
               : error
                 ? 'Your material is safe. Nothing was lost, and you can pick up where this stopped.'
                 : picking
@@ -339,9 +367,9 @@ export default function ProcessingScreen() {
         {hasMaterial && !picking ? (
           <View style={styles.analysisCard}>
             <View style={styles.iconShell}>
-              {error ? (
+              {error || multiPhotoPending ? (
                 <ThemedText allowFontScaling={false} style={styles.alert}>
-                  !
+                  {multiPhotoPending ? '✓' : '!'}
                 </ThemedText>
               ) : (
                 <ActivityIndicator
@@ -353,7 +381,7 @@ export default function ProcessingScreen() {
 
             <View style={styles.analysisCopy}>
               <ThemedText type="subtitle">
-                {error ? 'Analysis stopped' : status.title}
+                {multiPhotoPending ? 'Session preserved' : error ? 'Analysis stopped' : status.title}
               </ThemedText>
 
               <ThemedText
@@ -361,7 +389,9 @@ export default function ProcessingScreen() {
                 style={styles.body}
                 accessibilityLiveRegion="polite"
               >
-                {error || status.body}
+                {multiPhotoPending
+                  ? 'Return to the camera to review or change this session. Processing will support the full set when the Milestone 3 pipeline is implemented.'
+                  : error || status.body}
               </ThemedText>
             </View>
           </View>
@@ -478,7 +508,7 @@ export default function ProcessingScreen() {
           </View>
         ) : null}
 
-        <View style={styles.promiseCard}>
+        {!multiPhotoPending && !invalidCaptureSession ? <View style={styles.promiseCard}>
           <ThemedText type="smallBold" style={styles.promiseLabel}>
             CLASSLENS PROMISE
           </ThemedText>
@@ -495,9 +525,9 @@ export default function ProcessingScreen() {
             sample notes, or unrelated academic content when analysis
             is unavailable.
           </ThemedText>
-        </View>
+        </View> : null}
 
-        <View style={styles.steps}>
+        {!multiPhotoPending && !invalidCaptureSession ? <View style={styles.steps}>
           <Step
             number="01"
             title="Capture"
@@ -516,9 +546,19 @@ export default function ProcessingScreen() {
             description="Notes, slides, quiz and Q&A"
             active={building}
           />
-        </View>
+        </View> : null}
 
         <View style={styles.actions}>
+          {multiPhotoPending ? (
+            <Pressable
+              accessibilityRole="button"
+              onPress={() => router.back()}
+              style={({ pressed }) => [styles.primaryButton, pressed && styles.pressed]}
+            >
+              <ThemedText style={styles.primaryButtonText}>Review captured photos</ThemedText>
+            </Pressable>
+          ) : null}
+
           {error ? (
             <Pressable
               accessibilityRole="button"
@@ -534,7 +574,7 @@ export default function ProcessingScreen() {
             </Pressable>
           ) : null}
 
-          <Pressable
+          {!multiPhotoPending ? <Pressable
             accessibilityRole="button"
             onPress={retry}
             style={({ pressed }) => [
@@ -547,9 +587,9 @@ export default function ProcessingScreen() {
                 ? 'Choose different material'
                 : 'Return to capture'}
             </ThemedText>
-          </Pressable>
+          </Pressable> : null}
 
-          <Pressable
+          {!multiPhotoPending ? <Pressable
             accessibilityRole="button"
             onPress={() => router.back()}
             style={({ pressed }) => [
@@ -560,7 +600,7 @@ export default function ProcessingScreen() {
             <ThemedText style={styles.secondaryButtonText}>
               Go back
             </ThemedText>
-          </Pressable>
+          </Pressable> : null}
         </View>
 
         <ThemedText
