@@ -20,7 +20,9 @@ import {
   serializeCaptureSession,
   type CaptureSession,
   type CaptureSessionPhoto,
+  type PhotoQualityWarning,
 } from '@/features/capture/captureSession';
+import { checkPhotoQuality } from '@/features/capture/photoQuality';
 
 function photoFromCamera(picture: CameraCapturedPicture, sequence: number): CaptureSessionPhoto {
   const capturedAt = new Date().toISOString();
@@ -33,7 +35,22 @@ function photoFromCamera(picture: CameraCapturedPicture, sequence: number): Capt
     mimeType: format === 'png' ? 'image/png' : 'image/jpeg',
     fileName: `classlens-${sequence}.${format}`,
     capturedAt,
+    quality: {
+      status: 'checking',
+      warnings: [],
+      metrics: null,
+    },
   };
+}
+
+function warningMessage(warnings: PhotoQualityWarning[]): string {
+  const labels = warnings.map((warning) => {
+    if (warning === 'too-dark') return 'too dark';
+    if (warning === 'too-bright') return 'too bright';
+    return 'blurry';
+  });
+  if (labels.length === 1) return `This photo looks ${labels[0]}.`;
+  return `This photo looks ${labels.slice(0, -1).join(', ')} and ${labels.at(-1)}.`;
 }
 
 export default function CaptureScreen() {
@@ -43,16 +60,27 @@ export default function CaptureScreen() {
   const pending = useRef(0);
   const sessionId = useRef(`capture-${Date.now()}`);
   const sessionCreatedAt = useRef(new Date().toISOString());
+  const photosRef = useRef<CaptureSessionPhoto[]>([]);
+  const checks = useRef(new Map<string, Promise<void>>());
+  const warningTimers = useRef(new Map<string, ReturnType<typeof setTimeout>>());
+  const removedPhotos = useRef(new Set<string>());
 
   const [permission, requestPermission] = useCameraPermissions();
   const [requestingPermission, setRequestingPermission] = useState(false);
   const [photos, setPhotos] = useState<CaptureSessionPhoto[]>([]);
+  const [pendingCount, setPendingCount] = useState(0);
   const [preview, setPreview] = useState<CaptureSessionPhoto | null>(null);
   const [taking, setTaking] = useState(false);
   const [focused, setFocused] = useState(true);
   const [cameraReady, setCameraReady] = useState(false);
   const [cameraError, setCameraError] = useState('');
   const [cameraKey, setCameraKey] = useState(0);
+  const [finishing, setFinishing] = useState(false);
+
+  useEffect(() => () => {
+    warningTimers.current.forEach(clearTimeout);
+    warningTimers.current.clear();
+  }, []);
 
   useFocusEffect(
     useCallback(() => {
@@ -68,13 +96,36 @@ export default function CaptureScreen() {
     void requestPermission().finally(() => setRequestingPermission(false));
   }, [permission, requestPermission]);
 
+  function updatePhotos(updater: (current: CaptureSessionPhoto[]) => CaptureSessionPhoto[]) {
+    setPhotos((current) => {
+      const next = updater(current);
+      photosRef.current = next;
+      return next;
+    });
+  }
+
   function savePicture(picture: CameraCapturedPicture) {
     pending.current = Math.max(0, pending.current - 1);
+    setPendingCount(pending.current);
     sequence.current += 1;
-    setPhotos((current) => {
+    const photo = photoFromCamera(picture, sequence.current);
+    updatePhotos((current) => {
       if (current.length >= MAX_CAPTURE_PHOTOS) return current;
-      return [...current, photoFromCamera(picture, sequence.current)];
+      return [...current, photo];
     });
+    const task = analyzePhoto(photo);
+    checks.current.set(photo.id, task);
+    void task.finally(() => checks.current.delete(photo.id));
+  }
+
+  async function analyzePhoto(photo: CaptureSessionPhoto) {
+    const quality = await checkPhotoQuality(photo.uri);
+    if (removedPhotos.current.has(photo.id)) return;
+    updatePhotos((current) => current.map((item) => item.id === photo.id ? { ...item, quality } : item));
+    if (quality.status === 'warning') {
+      const timer = setTimeout(() => keepAnyway(photo.id), 3000);
+      warningTimers.current.set(photo.id, timer);
+    }
   }
 
   async function takePhoto() {
@@ -82,6 +133,7 @@ export default function CaptureScreen() {
     setTaking(true);
     setCameraError('');
     pending.current += 1;
+    setPendingCount(pending.current);
     try {
       await camera.current.takePictureAsync({
         quality: 0.9,
@@ -89,6 +141,7 @@ export default function CaptureScreen() {
       });
     } catch (caught) {
       pending.current = Math.max(0, pending.current - 1);
+      setPendingCount(pending.current);
       setCameraError(caught instanceof Error ? caught.message : 'ClassLens could not take that photo. Try again.');
     } finally {
       setTaking(false);
@@ -96,8 +149,21 @@ export default function CaptureScreen() {
   }
 
   function removePhoto(photoId: string) {
-    setPhotos((current) => current.filter((photo) => photo.id !== photoId));
+    removedPhotos.current.add(photoId);
+    const timer = warningTimers.current.get(photoId);
+    if (timer) clearTimeout(timer);
+    warningTimers.current.delete(photoId);
+    updatePhotos((current) => current.filter((photo) => photo.id !== photoId));
     setPreview((current) => current?.id === photoId ? null : current);
+  }
+
+  function keepAnyway(photoId: string) {
+    const timer = warningTimers.current.get(photoId);
+    if (timer) clearTimeout(timer);
+    warningTimers.current.delete(photoId);
+    updatePhotos((current) => current.map((photo) => photo.id === photoId && photo.quality.status === 'warning'
+      ? { ...photo, quality: { ...photo.quality, status: 'accepted-anyway' } }
+      : photo));
   }
 
   function retryCamera() {
@@ -106,13 +172,36 @@ export default function CaptureScreen() {
     setCameraKey((current) => current + 1);
   }
 
-  function finishSession() {
-    if (!photos.length) return;
+  async function finishSession() {
+    if (!photosRef.current.length || pending.current > 0 || finishing) return;
+    setFinishing(true);
+    const activeChecks = [...checks.current.values()];
+    const completed = activeChecks.length === 0 || await Promise.race([
+      Promise.allSettled(activeChecks).then(() => true),
+      new Promise<false>((resolve) => setTimeout(() => resolve(false), 1500)),
+    ]);
+    let sessionPhotos = photosRef.current;
+    if (!completed) {
+      sessionPhotos = sessionPhotos.map((photo) => photo.quality.status === 'checking'
+        ? {
+            ...photo,
+            quality: {
+              status: 'unchecked' as const,
+              warnings: [],
+              metrics: null,
+              checkedAt: new Date().toISOString(),
+              error: 'Quality check did not finish before the session was handed off.',
+            },
+          }
+        : photo);
+      photosRef.current = sessionPhotos;
+      setPhotos(sessionPhotos);
+    }
     const session: CaptureSession = {
       version: 1,
       id: sessionId.current,
       createdAt: sessionCreatedAt.current,
-      photos,
+      photos: sessionPhotos,
     };
     router.push({
       pathname: '/processing',
@@ -135,7 +224,10 @@ export default function CaptureScreen() {
     );
   }
 
-  const atLimit = photos.length + pending.current >= MAX_CAPTURE_PHOTOS;
+  const atLimit = photos.length + pendingCount >= MAX_CAPTURE_PHOTOS;
+  const activeWarning = photos.find((photo) => photo.quality.status === 'warning');
+  const previewPhoto = photos.find((photo) => photo.id === preview?.id) ?? preview;
+  const checking = photos.some((photo) => photo.quality.status === 'checking');
 
   return (
     <SafeAreaView edges={['left', 'right', 'bottom']} style={styles.safe}>
@@ -163,12 +255,12 @@ export default function CaptureScreen() {
           <Pressable
             accessibilityRole="button"
             accessibilityLabel={`Done with ${photos.length} photos`}
-            accessibilityState={{ disabled: photos.length === 0 }}
-            disabled={photos.length === 0}
+            accessibilityState={{ disabled: photos.length === 0 || pendingCount > 0 || finishing, busy: finishing }}
+            disabled={photos.length === 0 || pendingCount > 0 || finishing}
             onPress={finishSession}
-            style={({ pressed }) => [styles.done, (pressed || photos.length === 0) && styles.dim]}
+            style={({ pressed }) => [styles.done, (pressed || photos.length === 0 || pendingCount > 0 || finishing) && styles.dim]}
           >
-            <ThemedText style={styles.doneText}>Done</ThemedText>
+            <ThemedText style={styles.doneText}>{finishing ? 'Checking…' : 'Done'}</ThemedText>
           </Pressable>
         </View>
 
@@ -180,6 +272,23 @@ export default function CaptureScreen() {
         </View>
 
         <View style={styles.bottomPanel}>
+          {activeWarning ? (
+            <View accessibilityLiveRegion="polite" style={styles.warningCard}>
+              <View style={styles.warningCopy}>
+                <ThemedText style={styles.warningTitle}>Check photo {photos.indexOf(activeWarning) + 1}</ThemedText>
+                <ThemedText style={styles.warningBody}>{warningMessage(activeWarning.quality.warnings)}</ThemedText>
+              </View>
+              <View style={styles.warningActions}>
+                <Pressable accessibilityRole="button" accessibilityLabel="Retake warning photo" onPress={() => removePhoto(activeWarning.id)} style={styles.warningButton}>
+                  <ThemedText style={styles.warningButtonText}>Retake</ThemedText>
+                </Pressable>
+                <Pressable accessibilityRole="button" onPress={() => keepAnyway(activeWarning.id)} style={[styles.warningButton, styles.keepButton]}>
+                  <ThemedText style={styles.keepButtonText}>Keep Anyway</ThemedText>
+                </Pressable>
+              </View>
+            </View>
+          ) : null}
+
           {cameraError ? (
             <View accessibilityLiveRegion="polite" style={styles.errorCard}>
               <ThemedText style={styles.errorTitle}>Camera paused</ThemedText>
@@ -208,6 +317,15 @@ export default function CaptureScreen() {
                 <View style={styles.thumbnailNumber}>
                   <ThemedText style={styles.thumbnailNumberText}>{index + 1}</ThemedText>
                 </View>
+                {photo.quality.status === 'checking' ? (
+                  <View style={styles.qualityBadge}><ActivityIndicator size="small" color="#FFFFFF" /></View>
+                ) : photo.quality.status === 'warning' || photo.quality.status === 'accepted-anyway' ? (
+                  <View style={[styles.qualityBadge, styles.qualityWarning]}><ThemedText style={styles.qualityBadgeText}>!</ThemedText></View>
+                ) : photo.quality.status === 'unchecked' ? (
+                  <View style={[styles.qualityBadge, styles.qualityUnchecked]}><ThemedText style={styles.qualityBadgeText}>?</ThemedText></View>
+                ) : (
+                  <View style={[styles.qualityBadge, styles.qualityGood]}><ThemedText style={styles.qualityBadgeText}>✓</ThemedText></View>
+                )}
               </Pressable>
             ))}
             {photos.length === 0 ? (
@@ -230,7 +348,7 @@ export default function CaptureScreen() {
               <View style={styles.shutterInner} />
             </Pressable>
             <View style={[styles.shutterSide, styles.rightStatus]}>
-              {!cameraReady && !cameraError ? <ActivityIndicator color="#FFFFFF" /> : <ThemedText style={styles.readyText}>{taking ? 'Saving…' : 'Ready'}</ThemedText>}
+              {!cameraReady && !cameraError ? <ActivityIndicator color="#FFFFFF" /> : <ThemedText style={styles.readyText}>{taking ? 'Saving…' : checking ? 'Checking…' : 'Ready'}</ThemedText>}
             </View>
           </View>
         </View>
@@ -238,7 +356,12 @@ export default function CaptureScreen() {
 
       <Modal visible={preview !== null} animationType="fade" transparent onRequestClose={() => setPreview(null)}>
         <SafeAreaView style={styles.previewBackdrop}>
-          {preview ? <Image source={{ uri: preview.uri }} style={styles.previewImage} resizeMode="contain" /> : null}
+          {previewPhoto ? <Image source={{ uri: previewPhoto.uri }} style={styles.previewImage} resizeMode="contain" /> : null}
+          {previewPhoto?.quality.status === 'accepted-anyway' || previewPhoto?.quality.status === 'warning' ? (
+            <View style={styles.previewWarning}>
+              <ThemedText style={styles.previewWarningText}>{warningMessage(previewPhoto.quality.warnings)}</ThemedText>
+            </View>
+          ) : null}
           <View style={styles.previewActions}>
             <Pressable accessibilityRole="button" onPress={() => setPreview(null)} style={styles.previewButton}>
               <ThemedText style={styles.previewButtonText}>Back to camera</ThemedText>
@@ -303,6 +426,11 @@ const styles = StyleSheet.create({
   thumbnail: { width: '100%', height: '100%' },
   thumbnailNumber: { position: 'absolute', left: 5, bottom: 5, width: 20, height: 20, alignItems: 'center', justifyContent: 'center', borderRadius: 10, backgroundColor: 'rgba(25,45,39,0.9)' },
   thumbnailNumberText: { color: '#FFFFFF', fontSize: 10, lineHeight: 13, fontWeight: '800' },
+  qualityBadge: { position: 'absolute', top: 4, right: 4, width: 22, height: 22, alignItems: 'center', justifyContent: 'center', borderRadius: 11, backgroundColor: 'rgba(25,45,39,0.9)' },
+  qualityWarning: { backgroundColor: '#B45C23' },
+  qualityUnchecked: { backgroundColor: '#6F675D' },
+  qualityGood: { backgroundColor: Brand.forest },
+  qualityBadgeText: { color: '#FFFFFF', fontSize: 12, lineHeight: 15, fontWeight: '900' },
   emptyStrip: { color: 'rgba(255,255,255,0.68)', fontSize: 13 },
   shutterRow: { minHeight: 76, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 18 },
   shutterSide: { flex: 1 },
@@ -316,8 +444,19 @@ const styles = StyleSheet.create({
   errorBody: { color: '#7D3333', fontSize: 13, lineHeight: 18 },
   retryButton: { minHeight: 38, alignItems: 'center', justifyContent: 'center', marginTop: 4, borderRadius: 12, backgroundColor: '#7D3333' },
   retryText: { color: '#FFFFFF', fontWeight: '700' },
+  warningCard: { marginHorizontal: 16, gap: 12, padding: 14, borderRadius: 16, backgroundColor: '#FFF4DF' },
+  warningCopy: { gap: 3 },
+  warningTitle: { color: '#714313', fontSize: 15, fontWeight: '800' },
+  warningBody: { color: '#714313', fontSize: 13, lineHeight: 18 },
+  warningActions: { flexDirection: 'row', gap: 10 },
+  warningButton: { flex: 1, minHeight: 42, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: '#9B6428', borderRadius: 12 },
+  warningButtonText: { color: '#714313', fontWeight: '800' },
+  keepButton: { borderColor: Brand.forest, backgroundColor: Brand.forest },
+  keepButtonText: { color: '#FFFFFF', fontWeight: '800' },
   previewBackdrop: { flex: 1, justifyContent: 'space-between', padding: 18, backgroundColor: '#06100C' },
   previewImage: { flex: 1, width: '100%' },
+  previewWarning: { marginTop: 12, padding: 12, borderRadius: 12, backgroundColor: '#FFF4DF' },
+  previewWarningText: { color: '#714313', textAlign: 'center', fontWeight: '700' },
   previewActions: { flexDirection: 'row', gap: 12, paddingTop: 16 },
   previewButton: { flex: 1, minHeight: 52, alignItems: 'center', justifyContent: 'center', borderRadius: 16, backgroundColor: Brand.forest },
   removeButton: { backgroundColor: '#8C3B3B' },

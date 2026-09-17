@@ -1,5 +1,24 @@
 export const MAX_CAPTURE_PHOTOS = 6;
 
+export type PhotoQualityWarning = 'blurry' | 'too-dark' | 'too-bright';
+export type PhotoQualityStatus = 'checking' | 'good' | 'warning' | 'accepted-anyway' | 'unchecked';
+
+export type PhotoQualityMetrics = {
+  laplacianVariance: number;
+  darkPixelRatio: number;
+  brightPixelRatio: number;
+  sampleWidth: number;
+  sampleHeight: number;
+};
+
+export type PhotoQuality = {
+  status: PhotoQualityStatus;
+  warnings: PhotoQualityWarning[];
+  metrics: PhotoQualityMetrics | null;
+  checkedAt?: string;
+  error?: string;
+};
+
 export type CaptureSessionPhoto = {
   id: string;
   uri: string;
@@ -8,6 +27,7 @@ export type CaptureSessionPhoto = {
   mimeType: 'image/jpeg' | 'image/png';
   fileName: string;
   capturedAt: string;
+  quality: PhotoQuality;
 };
 
 export type CaptureSession = {
@@ -49,5 +69,31 @@ function isCaptureSessionPhoto(value: unknown): value is CaptureSessionPhoto {
     && typeof photo.height === 'number'
     && (photo.mimeType === 'image/jpeg' || photo.mimeType === 'image/png')
     && typeof photo.fileName === 'string'
-    && typeof photo.capturedAt === 'string';
+    && typeof photo.capturedAt === 'string'
+    && isPhotoQuality(photo.quality);
+}
+
+function isPhotoQuality(value: unknown): value is PhotoQuality {
+  if (!value || typeof value !== 'object') return false;
+  const quality = value as Partial<PhotoQuality>;
+  return (quality.status === 'checking'
+      || quality.status === 'good'
+      || quality.status === 'warning'
+      || quality.status === 'accepted-anyway'
+      || quality.status === 'unchecked')
+    && Array.isArray(quality.warnings)
+    && quality.warnings.every((warning) => warning === 'blurry' || warning === 'too-dark' || warning === 'too-bright')
+    && (quality.metrics === null || isPhotoQualityMetrics(quality.metrics))
+    && (quality.checkedAt === undefined || typeof quality.checkedAt === 'string')
+    && (quality.error === undefined || typeof quality.error === 'string');
+}
+
+function isPhotoQualityMetrics(value: unknown): value is PhotoQualityMetrics {
+  if (!value || typeof value !== 'object') return false;
+  const metrics = value as Partial<PhotoQualityMetrics>;
+  return typeof metrics.laplacianVariance === 'number'
+    && typeof metrics.darkPixelRatio === 'number'
+    && typeof metrics.brightPixelRatio === 'number'
+    && typeof metrics.sampleWidth === 'number'
+    && typeof metrics.sampleHeight === 'number';
 }
