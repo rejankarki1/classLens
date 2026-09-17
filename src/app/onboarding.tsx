@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { ActivityIndicator, Pressable, StyleSheet, TextInput, View } from 'react-native';
+import { useRef, useState } from 'react';
+import { ActivityIndicator, Keyboard, Pressable, StyleSheet, TextInput, View } from 'react-native';
 
 import { ClassLensLogo } from '@/components/ClassLensLogo';
 import { ThemedText } from '@/components/themed-text';
@@ -15,12 +15,14 @@ export default function OnboardingScreen() {
   const [name, setName] = useState('');
   const [year, setYear] = useState<Year | null>(null);
   const [major, setMajor] = useState('');
+  const majorRef = useRef<TextInput>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
 
   const ready = name.trim().length > 0 && year !== null && major.trim().length > 0;
 
   async function submit() {
+    Keyboard.dismiss();
     if (!ready || busy || !year) return;
     setBusy(true);
     setError('');
@@ -40,7 +42,7 @@ export default function OnboardingScreen() {
   }];
 
   return (
-    <Screen>
+    <Screen avoidKeyboard>
       <View style={styles.header}>
         <ClassLensLogo compact />
       </View>
@@ -64,6 +66,9 @@ export default function OnboardingScreen() {
           placeholder="Alex Rivera"
           placeholderTextColor={theme.textSecondary}
           autoCapitalize="words"
+          returnKeyType="next"
+          submitBehavior="submit"
+          onSubmitEditing={() => majorRef.current?.focus()}
           accessibilityLabel="Full name, required"
           style={input}
         />
@@ -81,7 +86,10 @@ export default function OnboardingScreen() {
                 accessibilityLabel={option}
                 accessibilityState={{ selected: active, disabled: busy }}
                 disabled={busy}
-                onPress={() => setYear(option)}
+                onPress={() => {
+                  Keyboard.dismiss();
+                  setYear(option);
+                }}
                 style={({ pressed }) => [
                   styles.chip,
                   {
@@ -112,11 +120,15 @@ export default function OnboardingScreen() {
       <View style={styles.field}>
         <ThemedText themeColor="textSecondary" style={styles.label}>MAJOR OR PROGRAM</ThemedText>
         <TextInput
+          ref={majorRef}
           value={major}
           onChangeText={setMajor}
           editable={!busy}
           placeholder="Computer Science"
           placeholderTextColor={theme.textSecondary}
+          returnKeyType="done"
+          submitBehavior="blurAndSubmit"
+          onSubmitEditing={submit}
           accessibilityLabel="Major or program, required"
           style={input}
         />

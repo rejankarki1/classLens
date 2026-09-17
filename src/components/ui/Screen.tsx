@@ -1,9 +1,12 @@
+import { useHeaderHeight } from 'expo-router/react-navigation';
 import type {
   PropsWithChildren,
   ReactNode,
 } from 'react';
 
 import {
+  KeyboardAvoidingView,
+  Platform,
   ScrollView,
   StyleSheet,
   View,
@@ -17,6 +20,8 @@ import { useTheme } from '@/hooks/use-theme';
 
 type Props = PropsWithChildren<{
   footer?: ReactNode;
+  /** Keep scrollable forms above the keyboard without changing other screens. */
+  avoidKeyboard?: boolean;
   showBottomNav?: boolean;
   /**
    * Opt in on screens that already show a native header. The header consumes
@@ -29,12 +34,14 @@ type Props = PropsWithChildren<{
 export function Screen({
   children,
   footer,
+  avoidKeyboard = false,
   showBottomNav = false,
   headerAbove = false,
 }: Props) {
   const theme = useTheme();
+  const headerHeight = useHeaderHeight();
 
-  return (
+  const content = (
     <SafeAreaView
       edges={headerAbove ? ['left', 'right', 'bottom'] : ['top', 'left', 'right', 'bottom']}
       style={[
@@ -45,6 +52,7 @@ export function Screen({
       ]}
     >
       <ScrollView
+        style={avoidKeyboard && styles.scroll}
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
         contentContainerStyle={[
@@ -76,12 +84,24 @@ export function Screen({
       {showBottomNav ? <AppBottomNav /> : null}
     </SafeAreaView>
   );
+
+  return avoidKeyboard ? (
+    <KeyboardAvoidingView
+      style={styles.safe}
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      keyboardVerticalOffset={headerHeight}
+    >
+      {content}
+    </KeyboardAvoidingView>
+  ) : content;
 }
 
 const styles = StyleSheet.create({
   safe: {
     flex: 1,
   },
+
+  scroll: { flex: 1 },
 
   content: { paddingHorizontal: 24,
     paddingBottom: 40,

@@ -1,9 +1,10 @@
 import { router } from 'expo-router';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, TextInput, View } from 'react-native';
 
 import { ClassLensLogo } from '@/components/ClassLensLogo';
 import { ThemedText } from '@/components/themed-text';
+import { PasswordField } from '@/components/ui/PasswordField';
 import { Screen } from '@/components/ui/Screen';
 import { Brand, Fonts } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
@@ -14,6 +15,7 @@ export default function LoginScreen() {
   const dark = theme.background !== Brand.paper;
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const passwordRef = useRef<TextInput>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
 
@@ -39,7 +41,7 @@ export default function LoginScreen() {
   }];
 
   return (
-    <Screen>
+    <Screen avoidKeyboard>
       <View style={styles.header}>
         <ClassLensLogo compact />
       </View>
@@ -66,6 +68,10 @@ export default function LoginScreen() {
           autoCorrect={false}
           keyboardType="email-address"
           textContentType="emailAddress"
+          autoComplete="email"
+          returnKeyType="next"
+          submitBehavior="submit"
+          onSubmitEditing={() => passwordRef.current?.focus()}
           accessibilityLabel="Email"
           style={input}
         />
@@ -73,15 +79,19 @@ export default function LoginScreen() {
 
       <View style={styles.field}>
         <ThemedText themeColor="textSecondary" style={styles.label}>PASSWORD</ThemedText>
-        <TextInput
+        <PasswordField
+          ref={passwordRef}
           value={password}
           onChangeText={setPassword}
           editable={!busy}
           placeholder="Your password"
           placeholderTextColor={theme.textSecondary}
           autoCapitalize="none"
-          secureTextEntry
           textContentType="password"
+          autoComplete="current-password"
+          returnKeyType="go"
+          submitBehavior="submit"
+          onSubmitEditing={submit}
           accessibilityLabel="Password"
           style={input}
         />

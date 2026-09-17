@@ -1,9 +1,11 @@
 import { router } from 'expo-router';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, TextInput, View } from 'react-native';
 
 import { ClassLensLogo } from '@/components/ClassLensLogo';
 import { ThemedText } from '@/components/themed-text';
+import { AppButton } from '@/components/ui/AppButton';
+import { PasswordField } from '@/components/ui/PasswordField';
 import { Screen } from '@/components/ui/Screen';
 import { Brand, Fonts } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
@@ -14,8 +16,10 @@ export default function SignupScreen() {
   const dark = theme.background !== Brand.paper;
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const passwordRef = useRef<TextInput>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [confirmationEmail, setConfirmationEmail] = useState<string | null>(null);
 
   const ready = email.trim().length > 0 && password.length > 0;
 
@@ -24,12 +28,42 @@ export default function SignupScreen() {
     setBusy(true);
     setError('');
     try {
-      await signUp(email, password);
-      // The root layout sends a new account straight to onboarding.
+      const result = await signUp(email, password);
+      if (result.requiresEmailConfirmation) {
+        setConfirmationEmail(email.trim());
+      }
+      // With an active session, the root layout handles navigation.
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : 'Could not create your account.');
+    } finally {
       setBusy(false);
     }
+  }
+
+  if (confirmationEmail !== null) {
+    return (
+      <Screen>
+        <View style={styles.header}>
+          <ClassLensLogo compact />
+        </View>
+
+        <View style={styles.intro}>
+          <ThemedText
+            type="title"
+            style={styles.title}
+            accessibilityRole="header"
+            accessibilityLiveRegion="polite"
+          >
+            Check your email
+          </ThemedText>
+          <ThemedText themeColor="textSecondary">
+            We sent a confirmation link to your TXST email, {confirmationEmail}. Open the link to activate your account, then sign in.
+          </ThemedText>
+        </View>
+
+        <AppButton title="Go to sign in" onPress={() => router.replace('/login')} />
+      </Screen>
+    );
   }
 
   const input = [styles.input, {
@@ -39,7 +73,7 @@ export default function SignupScreen() {
   }];
 
   return (
-    <Screen>
+    <Screen avoidKeyboard>
       <View style={styles.header}>
         <ClassLensLogo compact />
       </View>
@@ -66,6 +100,10 @@ export default function SignupScreen() {
           autoCorrect={false}
           keyboardType="email-address"
           textContentType="emailAddress"
+          autoComplete="email"
+          returnKeyType="next"
+          submitBehavior="submit"
+          onSubmitEditing={() => passwordRef.current?.focus()}
           accessibilityLabel="Email"
           style={input}
         />
@@ -73,15 +111,19 @@ export default function SignupScreen() {
 
       <View style={styles.field}>
         <ThemedText themeColor="textSecondary" style={styles.label}>PASSWORD</ThemedText>
-        <TextInput
+        <PasswordField
+          ref={passwordRef}
           value={password}
           onChangeText={setPassword}
           editable={!busy}
           placeholder="At least 6 characters"
           placeholderTextColor={theme.textSecondary}
           autoCapitalize="none"
-          secureTextEntry
           textContentType="newPassword"
+          autoComplete="new-password"
+          returnKeyType="go"
+          submitBehavior="submit"
+          onSubmitEditing={submit}
           accessibilityLabel="Password"
           style={input}
         />

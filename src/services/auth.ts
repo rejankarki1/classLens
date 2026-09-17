@@ -65,7 +65,11 @@ export async function onAuthChange(listener: (userId: string | null) => void): P
   return () => data.subscription.unsubscribe();
 }
 
-export async function signUp(email: string, password: string): Promise<void> {
+export type SignUpResult = {
+  requiresEmailConfirmation: boolean;
+};
+
+export async function signUp(email: string, password: string): Promise<SignUpResult> {
   requireSupabase('Sign up');
   const address = email.trim();
   if (!address) throw new Error('Email is required.');
@@ -74,10 +78,7 @@ export async function signUp(email: string, password: string): Promise<void> {
   const { supabase } = await import('@/lib/supabase');
   const { data, error } = await supabase.auth.signUp({ email: address, password });
   if (error) throw new Error(error.message);
-  // Email confirmation leaves no session; the app cannot continue without one.
-  if (!data.session) {
-    throw new Error('Account created, but email confirmation is on. Disable it in Supabase Auth settings for this demo, then sign in.');
-  }
+  return { requiresEmailConfirmation: !data.session };
 }
 
 export async function signIn(email: string, password: string): Promise<void> {
