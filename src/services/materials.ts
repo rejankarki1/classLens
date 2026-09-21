@@ -19,7 +19,7 @@ type MaterialRow = {
   extracted_text: string | null;
 };
 
-const captureColumns = 'id, capture_session_id, client_photo_id, page_number, storage_path, mime_type, captured_at, status';
+const captureColumns = 'id, capture_session_id, client_photo_id, page_number, storage_path, mime_type, captured_at, status, processing_job_id, lecture_id, quality_metadata';
 type CaptureRow = {
   id: string;
   capture_session_id: string;
@@ -29,6 +29,9 @@ type CaptureRow = {
   mime_type: CaptureRecord['mimeType'];
   captured_at: string;
   status: CaptureRecord['status'];
+  processing_job_id: string | null;
+  lecture_id: string | null;
+  quality_metadata: CaptureRecord['quality'] | null;
 };
 
 function mapMaterial(row: MaterialRow): Material {
@@ -51,6 +54,9 @@ function mapCapture(row: CaptureRow): CaptureRecord {
     mimeType: row.mime_type,
     capturedAt: row.captured_at,
     status: row.status,
+    processingJobId: row.processing_job_id,
+    lectureId: row.lecture_id,
+    quality: row.quality_metadata,
   };
 }
 
@@ -163,10 +169,25 @@ export async function uploadCapture(input: CaptureUploadInput): Promise<CaptureR
   const existing = await read();
   if (existing.error) throw new Error(`Could not check capture upload: ${existing.error.message}`);
   if (existing.data) {
-    const capture = mapCapture(existing.data);
+    let capture = mapCapture(existing.data);
     if (capture.sessionId !== input.sessionId || capture.clientPhotoId !== input.clientPhotoId
       || capture.pageNumber !== input.pageNumber || capture.storagePath !== storagePath) {
       throw new Error('Existing capture metadata does not match this photo.');
+    }
+    if (input.processingJobId && capture.processingJobId && capture.processingJobId !== input.processingJobId) {
+      throw new Error('Existing capture belongs to a different processing job.');
+    }
+    if (input.processingJobId && !capture.processingJobId) {
+      const adopted = await supabase.from('captures').update({
+        processing_job_id: input.processingJobId,
+        ...(input.quality ? { quality_metadata: input.quality } : {}),
+        updated_at: new Date().toISOString(),
+      }).eq('id', capture.id).is('processing_job_id', null)
+        .select(captureColumns).returns<CaptureRow[]>().maybeSingle();
+      if (adopted.error) throw new Error(`Could not adopt existing capture: ${adopted.error.message}`);
+      const verified = adopted.data ?? (await read()).data;
+      if (!verified || verified.processing_job_id !== input.processingJobId) throw new Error('Existing capture could not be linked to this processing job.');
+      capture = mapCapture(verified);
     }
     return capture;
   }
@@ -199,6 +220,8 @@ export async function uploadCapture(input: CaptureUploadInput): Promise<CaptureR
     storage_path: storagePath,
     mime_type: input.mimeType,
     captured_at: input.capturedAt,
+    ...(input.processingJobId ? { processing_job_id: input.processingJobId } : {}),
+    ...(input.quality ? { quality_metadata: input.quality } : {}),
   }).select(captureColumns).returns<CaptureRow[]>().single();
   if (!insert.error && insert.data) return mapCapture(insert.data);
 
@@ -242,7 +265,12 @@ export async function getMaterials(lectureId: string): Promise<Material[]> {
     .select(materialColumns).eq('lecture_id', lectureId)
     .order('created_at').order('id').returns<MaterialRow[]>();
   if (error) throw new Error(`Could not load materials: ${error.message}`);
-  return data.map(mapMaterial);
+  if (data.length) return data.map(mapMaterial);
+  const captures = await supabase.from('captures')
+    .select('id, storage_path, page_number').eq('lecture_id', lectureId)
+    .order('page_number').returns<{ id: string; storage_path: string; page_number: number }[]>();
+  if (captures.error) throw new Error(`Could not load lecture captures: ${captures.error.message}`);
+  return captures.data.map((capture) => ({ id: capture.id, lectureId, type: 'photo', filePath: capture.storage_path }));
 }
 
 /**

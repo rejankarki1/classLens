@@ -9,7 +9,8 @@ import {
 } from 'expo-router';
 
 import { useEffect, useState } from 'react';
-import { ActivityIndicator, View } from 'react-native';
+import { ActivityIndicator, AppState, View } from 'react-native';
+import * as Notifications from 'expo-notifications';
 
 import { StatusBar } from 'expo-status-bar';
 
@@ -17,6 +18,9 @@ import { useTheme } from '@/hooks/use-theme';
 import { Brand } from '@/constants/theme';
 import { getCurrentUserId, getMyProfile, onAuthChange, onProfileChange } from '@/services/auth';
 import { hasEnrolledCourses, onEnrollmentChange } from '@/services/enrollment';
+import { registerProcessingBackgroundTask, unregisterProcessingBackgroundTask } from '@/services/processingBackground';
+import { resumeProcessingJobs } from '@/services/processingOrchestrator';
+import { getProcessingJob } from '@/services/processingJobs';
 
 const authRoutes = ['login', 'signup'];
 
@@ -106,14 +110,53 @@ function useAuthGate() {
     }
   }, [ready, userId, hasProfile, hasEnrollment, segments, navigationState?.key]);
 
-  return ready;
+  return { ready, userId };
 }
 
 export default function RootLayout() {
   const theme = useTheme();
-  const ready = useAuthGate();
+  const { ready, userId } = useAuthGate();
   const dark = theme.background !== Brand.paper;
   const navigationTheme = dark ? DarkTheme : DefaultTheme;
+
+  useEffect(() => {
+    if (!userId) {
+      void unregisterProcessingBackgroundTask().catch(() => undefined);
+      return;
+    }
+    void registerProcessingBackgroundTask().catch(() => undefined);
+    void resumeProcessingJobs('foreground').catch(() => undefined);
+    const recoveryTimer = setInterval(() => {
+      if (AppState.currentState === 'active') void resumeProcessingJobs('foreground').catch(() => undefined);
+    }, 60_000);
+    const subscription = AppState.addEventListener('change', (state) => {
+      if (state === 'active') void resumeProcessingJobs('foreground').catch(() => undefined);
+    });
+    return () => { subscription.remove(); clearInterval(recoveryTimer); };
+  }, [userId]);
+
+  useEffect(() => {
+    if (!ready || !userId) return;
+    const openJob = async (jobId: string) => {
+      const job = await getProcessingJob(jobId).catch(() => null);
+      if (!job) return;
+      if (job.stage === 'completed' && job.lectureId) router.push({ pathname: '/lecture/[id]', params: { id: job.lectureId } });
+      else if (job.stage === 'course_needed') router.push({ pathname: '/course-resolution' as never, params: { jobId } } as never);
+      else router.push({ pathname: '/processing', params: { jobId } });
+    };
+    const response = Notifications.addNotificationResponseReceivedListener((event) => {
+      const jobId = event.notification.request.content.data?.jobId;
+      if (typeof jobId === 'string') void openJob(jobId);
+    });
+    void Notifications.getLastNotificationResponseAsync().then((event) => {
+      const jobId = event?.notification.request.content.data?.jobId;
+      if (typeof jobId === 'string') {
+        void openJob(jobId);
+        void Notifications.clearLastNotificationResponseAsync();
+      }
+    });
+    return () => response.remove();
+  }, [ready, userId]);
 
   return (
     <ThemeProvider
@@ -227,6 +270,11 @@ export default function RootLayout() {
           options={{
             title: 'The clarity process',
           }}
+        />
+
+        <Stack.Screen
+          name="course-resolution"
+          options={{ title: 'Choose course' }}
         />
       </Stack>
     </ThemeProvider>

@@ -32,10 +32,12 @@ const onCardMuted = Colors.light.textSecondary;
 import { getLecture } from '@/services/lectures';
 import { getCourse } from '@/services/courses';
 import { getMaterialUrl, getMaterials } from '@/services/materials';
+import { getLectureCaptureAnalysis } from '@/services/ai';
 
 import type {
   Course,
   Lecture,
+  CaptureAnalysis,
 } from '@/types';
 
 export default function LectureNotebookScreen() {
@@ -60,6 +62,7 @@ export default function LectureNotebookScreen() {
 
   const [originals, setOriginals] =
     useState<string[]>([]);
+  const [captureAnalysis, setCaptureAnalysis] = useState<CaptureAnalysis | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -99,10 +102,10 @@ export default function LectureNotebookScreen() {
         // Originals are supporting content: a failure here must not take down
         // the notebook the student came to read.
         try {
-          const materials =
-            await getMaterials(
-              nextLecture.id
-            );
+          const [materials, savedAnalysis] = await Promise.all([
+            getMaterials(nextLecture.id),
+            getLectureCaptureAnalysis(nextLecture.id),
+          ]);
 
           const urls =
             await Promise.all(
@@ -121,9 +124,11 @@ export default function LectureNotebookScreen() {
                 typeof url === 'string'
             )
           );
+          setCaptureAnalysis(savedAnalysis);
         } catch {
           if (active) {
             setOriginals([]);
+            setCaptureAnalysis(null);
           }
         }
       } catch {
@@ -310,6 +315,23 @@ export default function LectureNotebookScreen() {
       </View>
 
       <View style={styles.rule} />
+
+      {captureAnalysis ? (
+        <NotebookSection number="00" eyebrow="FAITHFUL EXTRACTION" title="What ClassLens could read">
+          <View style={styles.takeawayList}>
+            {captureAnalysis.photos.map((photo) => (
+              <View key={photo.captureId} style={styles.takeawayCard}>
+                <View style={styles.takeawayIndex}><ThemedText allowFontScaling={false} style={styles.takeawayIndexText}>{String(photo.pageNumber).padStart(2, '0')}</ThemedText></View>
+                <View style={{ flex: 1, gap: 5 }}>
+                  <ThemedText style={styles.takeawayText}>{photo.faithfulExtraction || 'No readable text was found on this page.'}</ThemedText>
+                  <ThemedText type="small" themeColor="textSecondary">Readability: {photo.readability}{photo.unclearSections.length ? ` · Unclear: ${photo.unclearSections.join('; ')}` : ''}</ThemedText>
+                </View>
+              </View>
+            ))}
+          </View>
+          {captureAnalysis.examples.length ? <View style={styles.summaryBlock}><View style={styles.summaryAccent} /><ThemedText style={styles.summaryText}>Examples: {captureAnalysis.examples.join(' · ')}</ThemedText></View> : null}
+        </NotebookSection>
+      ) : null}
 
       {/* NOTEBOOK OVERVIEW */}
 

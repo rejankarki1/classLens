@@ -95,6 +95,22 @@ export async function getCaptureAnalysis(sessionId: string, captureIds: string[]
   return parsed;
 }
 
+export async function getLectureCaptureAnalysis(lectureId: string): Promise<CaptureAnalysis | null> {
+  if (getDataMode() !== 'supabase') return null;
+  const { supabase } = await import('@/lib/supabase');
+  const lecture = await supabase.from('lectures').select('capture_session_id, capture_analysis_id')
+    .eq('id', lectureId).returns<{ capture_session_id: string | null; capture_analysis_id: string | null }[]>().maybeSingle();
+  if (lecture.error) throw new Error(`Could not load lecture analysis link: ${lecture.error.message}`);
+  if (!lecture.data?.capture_session_id || !lecture.data.capture_analysis_id) return null;
+  const captures = await supabase.from('captures').select('id, page_number').eq('lecture_id', lectureId)
+    .order('page_number').returns<{ id: string; page_number: number }[]>();
+  if (captures.error) throw new Error(`Could not load lecture capture order: ${captures.error.message}`);
+  const analysis = await supabase.from('capture_analyses').select('analysis').eq('id', lecture.data.capture_analysis_id)
+    .returns<{ analysis: unknown }[]>().maybeSingle();
+  if (analysis.error) throw new Error(`Could not load lecture capture analysis: ${analysis.error.message}`);
+  return analysis.data ? parseCaptureAnalysis(analysis.data.analysis, captures.data.map((capture) => capture.id)) : null;
+}
+
 export async function askLecture(lectureId: string, question: string): Promise<AskLectureResult> {
   const body = parseAskLectureInput(lectureId, question);
   if (getDataMode() !== 'supabase') throw new Error('Lecture Q&A requires EXPO_PUBLIC_DATA_MODE=supabase.');

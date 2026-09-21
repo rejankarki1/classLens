@@ -116,6 +116,7 @@ function request(body = JSON.stringify({ materialId: id }), headers = {}, method
   let mode = 'supabase', invoked = 0, result = { data: analysis, error: null };
   const exports = {};
   vm.runInNewContext(code, { exports, Response, Error, require: name => {
+    if (name === '@supabase/supabase-js') return { FunctionsHttpError: class FunctionsHttpError extends Error {} };
     if (name === '@/lib/quiz') return require('../../../src/lib/quiz.ts');
     if (name === '@/lib/askLecture') return require('../../../src/lib/askLecture.ts');
     if (name === '@/lib/dataMode') return { getDataMode: () => mode };
@@ -126,7 +127,7 @@ function request(body = JSON.stringify({ materialId: id }), headers = {}, method
       invoked++; return result;
     } } } };
     throw new Error('Unexpected import');
-  } });
+  }, __DEV__: false });
   assert.deepEqual(await exports.analyzeMaterial({ id, type: 'photo' }), parseLectureAnalysis(analysis));
   result = { data: null, error: { context: json({ error: { message: 'Quota reached.' } }) } };
   await assert.rejects(exports.analyzeMaterial({ id, type: 'photo' }), /Quota reached/);

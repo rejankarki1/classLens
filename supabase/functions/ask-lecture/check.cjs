@@ -71,13 +71,15 @@ function request(body={lectureId:id,question:'What are the deletion cases?'},key
  const vm=require('node:vm');const exports={};let mode='supabase',result={data:{answer:' Grounded answer '},error:null},calls=0;
  const code=ts.transpileModule(fs.readFileSync(path.join(root,'src/services/ai.ts'),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText;
  vm.runInNewContext(code,{exports,Error,Response,require:name=>{
+  if(name==='@supabase/supabase-js')return {FunctionsHttpError:class FunctionsHttpError extends Error{}};
   if(name==='@/lib/quiz')return require('../../../src/lib/quiz.ts');
   if(name==='@/lib/askLecture')return require('../../../src/lib/askLecture.ts');
   if(name==='@/lib/lectureAnalysis')return {};
+  if(name==='@/lib/captureAnalysis')return {};
   if(name==='@/lib/dataMode')return {getDataMode:()=>mode};
   if(name==='@/lib/supabase')return {supabase:{functions:{invoke:async(name,{body})=>{calls++;assert.equal(name,'ask-lecture');assert.equal(body.lectureId,id);return result;}}}};
   throw Error(name);
- }});
+ },__DEV__:false});
  assert.equal((await exports.askLecture(id,'Question')).answer,'Grounded answer');
  result={data:null,error:{context:json({error:{message:'Quota reached.'}})}};await assert.rejects(exports.askLecture(id,'Question'),/Quota/);
  result={data:{answer:4},error:null};await assert.rejects(exports.askLecture(id,'Question'),/Invalid lecture answer/);

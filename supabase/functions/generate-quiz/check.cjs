@@ -72,13 +72,15 @@ function request(body={lectureId:id},key='test-key',method='POST'){
  const vm=require('node:vm');const exports={};let mode='supabase',result={data:quiz,error:null},calls=0;
  const code=ts.transpileModule(fs.readFileSync(path.join(root,'src/services/ai.ts'),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText;
  vm.runInNewContext(code,{exports,Error,Response,require:name=>{
+  if(name==='@supabase/supabase-js')return {FunctionsHttpError:class FunctionsHttpError extends Error{}};
   if(name==='@/lib/quiz')return require('../../../src/lib/quiz.ts');
   if(name==='@/lib/askLecture')return require('../../../src/lib/askLecture.ts');
   if(name==='@/lib/lectureAnalysis')return {};
+  if(name==='@/lib/captureAnalysis')return {};
   if(name==='@/lib/dataMode')return {getDataMode:()=>mode};
   if(name==='@/lib/supabase')return {supabase:{functions:{invoke:async(name,{body})=>{calls++;assert.equal(name,'generate-quiz');assert.equal(body.lectureId,id);return result;}}}};
   throw Error(name);
- }});
+ },__DEV__:false});
  assert.deepEqual(await exports.generateQuiz(id),quiz);
  result={data:null,error:{context:json({error:{message:'Quota reached.'}})}};await assert.rejects(exports.generateQuiz(id),/Quota/);
  result={data:{answer:4},error:null};await assert.rejects(exports.generateQuiz(id),/Quiz text/);

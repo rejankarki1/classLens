@@ -26,15 +26,20 @@ export interface CaptureRecord {
   mimeType: 'image/jpeg' | 'image/png';
   capturedAt: string;
   status: CaptureStatus;
+  processingJobId?: string | null;
+  lectureId?: string | null;
+  quality?: import('./captureSession').PhotoQuality | null;
 }
 
 export interface CaptureUploadInput {
+  processingJobId?: string;
   sessionId: string;
   clientPhotoId: string;
   pageNumber: number;
   uri: string;
   mimeType: 'image/jpeg' | 'image/png';
   capturedAt: string;
+  quality?: import('./captureSession').PhotoQuality;
 }
 
 export type CaptureReadability = 'clear' | 'partial' | 'unreadable';

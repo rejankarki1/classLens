@@ -351,6 +351,36 @@ one Gemini request. It persists one `capture_analyses` row per owner/session and
 returns that saved analysis on retries. The result is an analysis preview boundary;
 Milestone 3 does not create a course, lecture session, or notebook from it.
 
+### Durable photo processing and filing
+
+Authenticated photo sessions now create one owner-scoped `processing_jobs` row
+before leaving Capture. Accepted local files are copied into app-owned document
+storage until their deterministic `captures` rows are verified remotely. The same
+orchestrator handles the Processing screen, foreground resume, background task,
+and manual Retry. Audio and video are represented by the job contract but reject
+explicitly until their later milestones.
+
+Jobs move through `queued`, `uploading`, `analyzing`, `course_needed`, `filing`,
+`completed`, `retryable_failed`, and `terminal_failed`. Database validation rejects
+invalid transitions, a lease prevents concurrent runners, and three failures are
+the hard retry limit. Existing captures and a valid saved `capture_analyses` row
+are always reused; Gemini is never called after the session analysis is saved.
+
+Course matching considers only `getMyEnrolledCourses()`. An exact normalized code
+is weighted 0.85, name 0.55, professor 0.20, and topic overlap up to 0.25. Automatic
+filing requires at least 0.85 confidence and a 0.20 lead over the runner-up.
+Otherwise the job remains `course_needed` until the user confirms an enrolled
+course or explicitly creates and enrolls in one.
+
+Filing creates or reuses one owned `lectures` notebook per capture session, links
+the ordered `captures`, and retains the saved combined analysis as the source for
+faithful per-page extraction and AI-organized fields. Local notifications are
+optional and deduplicated per job event; Home is always the primary recovery UI.
+`expo-background-task` is best effort: iOS schedules opportunistically, requires
+a physical-device development build for meaningful testing, and will not run
+after the user force-quits the app. Authenticated foreground resume is the
+reliability fallback.
+
 ### Ask This Lecture
 
 askLecture(lectureId, question) now returns { answer: string }, replacing the unused

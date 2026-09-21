@@ -17,12 +17,12 @@ import { ThemedText } from '@/components/themed-text';
 import { Brand } from '@/constants/theme';
 import {
   MAX_CAPTURE_PHOTOS,
-  serializeCaptureSession,
   type CaptureSession,
   type CaptureSessionPhoto,
   type PhotoQualityWarning,
 } from '@/features/capture/captureSession';
 import { checkPhotoQuality } from '@/features/capture/photoQuality';
+import { enqueuePhotoProcessingJob } from '@/services/processingJobs';
 
 function photoFromCamera(picture: CameraCapturedPicture, sequence: number): CaptureSessionPhoto {
   const capturedAt = new Date().toISOString();
@@ -203,10 +203,13 @@ export default function CaptureScreen() {
       createdAt: sessionCreatedAt.current,
       photos: sessionPhotos,
     };
-    router.push({
-      pathname: '/processing',
-      params: { captureSession: serializeCaptureSession(session) },
-    });
+    try {
+      const job = await enqueuePhotoProcessingJob(session);
+      router.push({ pathname: '/processing', params: { jobId: job.id } });
+    } catch (caught) {
+      setCameraError(caught instanceof Error ? caught.message : 'The processing job could not be saved. Try again.');
+      setFinishing(false);
+    }
   }
 
   if (!permission || requestingPermission) {
