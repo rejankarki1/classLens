@@ -1,4 +1,4 @@
-import type { Material, MaterialUploadInput } from '@/types';
+import type { CaptureRecord, CaptureUploadInput, Material, MaterialUploadInput } from '@/types';
 import { getDataMode } from '@/lib/dataMode';
 
 const bucketName = 'lecture-materials';
@@ -19,6 +19,18 @@ type MaterialRow = {
   extracted_text: string | null;
 };
 
+const captureColumns = 'id, capture_session_id, client_photo_id, page_number, storage_path, mime_type, captured_at, status';
+type CaptureRow = {
+  id: string;
+  capture_session_id: string;
+  client_photo_id: string;
+  page_number: number;
+  storage_path: string;
+  mime_type: CaptureRecord['mimeType'];
+  captured_at: string;
+  status: CaptureRecord['status'];
+};
+
 function mapMaterial(row: MaterialRow): Material {
   return {
     id: row.id,
@@ -26,6 +38,19 @@ function mapMaterial(row: MaterialRow): Material {
     type: row.type,
     filePath: row.storage_path,
     ...(row.extracted_text === null ? {} : { extractedText: row.extracted_text }),
+  };
+}
+
+function mapCapture(row: CaptureRow): CaptureRecord {
+  return {
+    id: row.id,
+    sessionId: row.capture_session_id,
+    clientPhotoId: row.client_photo_id,
+    pageNumber: row.page_number,
+    storagePath: row.storage_path,
+    mimeType: row.mime_type,
+    capturedAt: row.captured_at,
+    status: row.status,
   };
 }
 
@@ -103,6 +128,88 @@ export async function uploadMaterial(input: MaterialUploadInput): Promise<Materi
     cleanupResult = `Cleanup failed: ${reason(error)}`;
   }
   throw new Error(`Could not register uploaded photo: ${insertFailure} ${cleanupResult}`);
+}
+
+function uuidFromHash(hash: string): string {
+  return `${hash.slice(0, 8)}-${hash.slice(8, 12)}-4${hash.slice(13, 16)}-8${hash.slice(17, 20)}-${hash.slice(20, 32)}`;
+}
+
+/** Upload one CaptureSession page. Deterministic IDs make retries safe. */
+export async function uploadCapture(input: CaptureUploadInput): Promise<CaptureRecord> {
+  if (getDataMode() !== 'supabase') {
+    throw new Error('Multi-photo upload requires EXPO_PUBLIC_DATA_MODE=supabase.');
+  }
+  if (!input.sessionId.trim() || !input.clientPhotoId.trim()) throw new Error('Capture session and photo IDs are required.');
+  if (!Number.isInteger(input.pageNumber) || input.pageNumber < 1 || input.pageNumber > 6) {
+    throw new Error('Capture page number must be between 1 and 6.');
+  }
+  const extension = input.mimeType === 'image/png' ? 'png' : input.mimeType === 'image/jpeg' ? 'jpg' : null;
+  if (!extension) throw new Error('Multi-photo capture supports JPEG and PNG photos only.');
+  if (!input.uri.startsWith('file://')) throw new Error('Photo upload requires a local file:// URI.');
+
+  const { digestStringAsync, CryptoDigestAlgorithm } = await import('expo-crypto');
+  const { supabase } = await import('@/lib/supabase');
+  const { data: auth, error: authError } = await supabase.auth.getUser();
+  if (authError || !auth.user) throw new Error('Sign in again before uploading lecture photos.');
+  const hash = await digestStringAsync(
+    CryptoDigestAlgorithm.SHA256,
+    `${auth.user.id}:${input.sessionId}:${input.clientPhotoId}`,
+  );
+  const id = uuidFromHash(hash);
+  const storagePath = `captures/${auth.user.id}/${id}/photo.${extension}`;
+
+  const read = () => supabase.from('captures')
+    .select(captureColumns).eq('id', id).returns<CaptureRow[]>().maybeSingle();
+  const existing = await read();
+  if (existing.error) throw new Error(`Could not check capture upload: ${existing.error.message}`);
+  if (existing.data) {
+    const capture = mapCapture(existing.data);
+    if (capture.sessionId !== input.sessionId || capture.clientPhotoId !== input.clientPhotoId
+      || capture.pageNumber !== input.pageNumber || capture.storagePath !== storagePath) {
+      throw new Error('Existing capture metadata does not match this photo.');
+    }
+    return capture;
+  }
+
+  const { File } = await import('expo-file-system');
+  let bytes: ArrayBuffer;
+  try {
+    const file = new File(input.uri);
+    if (!file.exists) throw new Error('Captured photo no longer exists. Please retake it.');
+    if (file.size <= 0) throw new Error('Captured photo is empty.');
+    if (file.size > maxPhotoBytes) throw new Error('Photo must be 10 MiB or smaller.');
+    bytes = await file.arrayBuffer();
+  } catch (error) {
+    throw new Error(`Could not read captured photo: ${reason(error)}`);
+  }
+
+  const bucket = supabase.storage.from(bucketName);
+  const upload = await bucket.upload(storagePath, bytes, { contentType: input.mimeType, upsert: false });
+  if (upload.error) {
+    // A previous attempt may have uploaded the deterministic object but lost its response.
+    const recovered = await bucket.download(storagePath);
+    if (recovered.error || !recovered.data) throw new Error(`Photo ${input.pageNumber} upload failed: ${upload.error.message}`);
+  }
+
+  const insert = await supabase.from('captures').insert({
+    id,
+    capture_session_id: input.sessionId,
+    client_photo_id: input.clientPhotoId,
+    page_number: input.pageNumber,
+    storage_path: storagePath,
+    mime_type: input.mimeType,
+    captured_at: input.capturedAt,
+  }).select(captureColumns).returns<CaptureRow[]>().single();
+  if (!insert.error && insert.data) return mapCapture(insert.data);
+
+  // Recover a committed insert whose response was lost or a concurrent retry.
+  const recovered = await read();
+  if (!recovered.error && recovered.data) return mapCapture(recovered.data);
+
+  let cleanup = 'The uploaded object could not be removed.';
+  const removed = await bucket.remove([storagePath]);
+  if (!removed.error && removed.data?.length) cleanup = 'The uploaded object was removed.';
+  throw new Error(`Could not register photo ${input.pageNumber}: ${insert.error?.message ?? 'No capture row returned.'} ${cleanup}`);
 }
 
 /** Conditionally attach once; never overwrite an existing lecture association. */

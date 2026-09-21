@@ -15,12 +15,12 @@ import { Brand, Fonts } from '@/constants/theme';
 
 import { parseCaptureSession } from '@/features/capture/captureSession';
 import { matchCourse } from '@/features/courses/matchCourse';
-import { analyzeMaterial } from '@/services/ai';
+import { analyzeCaptures, analyzeMaterial, getCaptureAnalysis } from '@/services/ai';
 import { createCourse } from '@/services/courses';
 import { enrollInCourse, getMyEnrolledCourses } from '@/services/enrollment';
 import { createLecture } from '@/services/lectures';
-import { attachMaterialToLecture, getMaterials, uploadMaterial } from '@/services/materials';
-import type { Course, LectureAnalysis, Material } from '@/types';
+import { attachMaterialToLecture, getMaterials, uploadCapture, uploadMaterial } from '@/services/materials';
+import type { CaptureAnalysis, CaptureRecord, Course, LectureAnalysis, Material } from '@/types';
 
 type Stage = 'uploading' | 'analyzing' | 'organizing' | 'saving' | 'done';
 
@@ -119,6 +119,8 @@ export default function ProcessingScreen() {
   const [error, setError] = useState('');
   const [choices, setChoices] = useState<Course[] | null>(null);
   const [attempt, setAttempt] = useState(0);
+  const [uploadIndex, setUploadIndex] = useState(0);
+  const [captureAnalysis, setCaptureAnalysis] = useState<CaptureAnalysis | null>(null);
   const [form, setForm] = useState({ code: '', name: '', professor: '' });
   const [creating, setCreating] = useState(false);
 
@@ -128,6 +130,7 @@ export default function ProcessingScreen() {
   const analysis = useRef<LectureAnalysis | null>(null);
   const savedLectureId = useRef<string | null>(null);
   const course = useRef<Course | null>(null);
+  const captures = useRef(new Map<string, CaptureRecord>());
 
   // A re-invoked effect must not start a second upload or a second paid
   // analysis while the first is still awaiting.
@@ -235,6 +238,50 @@ export default function ProcessingScreen() {
     void run();
   }, [attempt, source, mimeType, fileName, courseId, multiPhotoPending, invalidCaptureSession]);
 
+  useEffect(() => {
+    async function runMultiPhoto() {
+      const session = sessionResult.session;
+      if (!multiPhotoPending || invalidCaptureSession || !session || inFlight.current) return;
+      inFlight.current = true;
+      setError('');
+      try {
+        setStage('uploading');
+        const uploaded: CaptureRecord[] = [];
+        for (let index = 0; index < session.photos.length; index += 1) {
+          const photo = session.photos[index];
+          setUploadIndex(index + 1);
+          const existing = captures.current.get(photo.id);
+          const capture = existing ?? await uploadCapture({
+            sessionId: session.id,
+            clientPhotoId: photo.id,
+            pageNumber: index + 1,
+            uri: photo.uri,
+            mimeType: photo.mimeType,
+            capturedAt: photo.capturedAt,
+          });
+          captures.current.set(photo.id, capture);
+          uploaded.push(capture);
+        }
+
+        const captureIds = uploaded.map((capture) => capture.id);
+        setStage('analyzing');
+        await analyzeCaptures(session.id, captureIds);
+        setStage('organizing');
+        const persisted = await getCaptureAnalysis(session.id, captureIds);
+        if (!persisted) throw new Error('The combined analysis was not persisted. Try again.');
+        setStage('saving');
+        setCaptureAnalysis(persisted);
+        setStage('done');
+      } catch (caught) {
+        setError(message(caught));
+      } finally {
+        inFlight.current = false;
+      }
+    }
+
+    void runMultiPhoto();
+  }, [attempt, invalidCaptureSession, multiPhotoPending, sessionResult.session]);
+
   function retry() {
     router.replace('/capture');
   }
@@ -284,7 +331,9 @@ export default function ProcessingScreen() {
               : !hasMaterial
                 ? 'No lecture material found.'
                 : multiPhotoPending
-                  ? `${count} photos are safely handed off.`
+                  ? stage === 'done'
+                    ? `${count} lecture pages were analyzed together.`
+                    : `${count} photos are being processed.`
               : error
                 ? 'This didn’t come together.'
                 : picking
@@ -301,7 +350,11 @@ export default function ProcessingScreen() {
               : !hasMaterial
                 ? 'Choose a photo, slide, recording, or file and try again.'
                 : multiPhotoPending
-                  ? 'Every local photo reference reached Processing. Multi-photo upload and analysis arrive in Milestone 3, so none of these photos has been uploaded or analyzed yet.'
+                  ? error
+                    ? 'Uploaded pages stay saved. Try again to continue from the first unfinished step.'
+                    : stage === 'done'
+                      ? 'The original pages and one combined, faithful analysis are saved to your account.'
+                      : 'Every page is uploaded independently, then read together as one lecture.'
               : error
                 ? 'Your material is safe. Nothing was lost, and you can pick up where this stopped.'
                 : picking
@@ -367,9 +420,9 @@ export default function ProcessingScreen() {
         {hasMaterial && !picking ? (
           <View style={styles.analysisCard}>
             <View style={styles.iconShell}>
-              {error || multiPhotoPending ? (
+              {error || (multiPhotoPending && stage === 'done') ? (
                 <ThemedText allowFontScaling={false} style={styles.alert}>
-                  {multiPhotoPending ? '✓' : '!'}
+                  {error ? '!' : '✓'}
                 </ThemedText>
               ) : (
                 <ActivityIndicator
@@ -381,7 +434,13 @@ export default function ProcessingScreen() {
 
             <View style={styles.analysisCopy}>
               <ThemedText type="subtitle">
-                {multiPhotoPending ? 'Session preserved' : error ? 'Analysis stopped' : status.title}
+                {error
+                  ? 'Analysis stopped'
+                  : multiPhotoPending && stage === 'uploading'
+                    ? `Uploading ${uploadIndex}/${count}`
+                    : multiPhotoPending && stage === 'done'
+                      ? 'Combined analysis ready'
+                    : status.title}
               </ThemedText>
 
               <ThemedText
@@ -389,11 +448,41 @@ export default function ProcessingScreen() {
                 style={styles.body}
                 accessibilityLiveRegion="polite"
               >
-                {multiPhotoPending
-                  ? 'Return to the camera to review or change this session. Processing will support the full set when the Milestone 3 pipeline is implemented.'
-                  : error || status.body}
+                {error || (multiPhotoPending && stage === 'done'
+                  ? 'Review the faithful extraction and combined study notes below.'
+                  : status.body)}
               </ThemedText>
             </View>
+          </View>
+        ) : null}
+
+        {multiPhotoPending && captureAnalysis ? (
+          <View style={styles.resultSection}>
+            <ThemedText type="smallBold" style={styles.promiseLabel}>COMBINED ANALYSIS PREVIEW</ThemedText>
+            <ThemedText type="subtitle">{captureAnalysis.topicSignals[0] ?? 'Captured lecture'}</ThemedText>
+            <ThemedText themeColor="textSecondary" style={styles.body}>{captureAnalysis.combinedSummary}</ThemedText>
+
+            {captureAnalysis.photos.map((photo) => (
+              <View key={photo.captureId} style={styles.pageResult}>
+                <View style={styles.resultHeading}>
+                  <ThemedText type="smallBold">PAGE {photo.pageNumber}</ThemedText>
+                  <ThemedText type="small" themeColor="textSecondary">{photo.readability}</ThemedText>
+                </View>
+                <ThemedText style={styles.extraction}>
+                  {photo.faithfulExtraction || 'No readable text was found on this page.'}
+                </ThemedText>
+                {photo.unclearSections.map((section) => (
+                  <ThemedText key={section} type="small" style={styles.unclear}>Unclear: {section}</ThemedText>
+                ))}
+              </View>
+            ))}
+
+            <AnalysisList title="CONCEPTS" items={captureAnalysis.concepts} />
+            <AnalysisList title="EXAMPLES" items={captureAnalysis.examples} />
+            <AnalysisList title="ASSIGNMENTS" items={captureAnalysis.assignments} />
+            <AnalysisList title="EXAM MENTIONS" items={captureAnalysis.examMentions} />
+            <AnalysisList title="COURSE SIGNALS" items={captureAnalysis.courseSignals} />
+            <AnalysisList title="TOPIC SIGNALS" items={captureAnalysis.topicSignals} />
           </View>
         ) : null}
 
@@ -527,35 +616,41 @@ export default function ProcessingScreen() {
           </ThemedText>
         </View> : null}
 
-        {!multiPhotoPending && !invalidCaptureSession ? <View style={styles.steps}>
+        {!invalidCaptureSession ? <View style={styles.steps}>
           <Step
             number="01"
-            title="Capture"
-            description="Your original class material"
+            title={multiPhotoPending ? 'Upload' : 'Capture'}
+            description={multiPhotoPending ? `${uploadIndex || 0} of ${count} pages` : 'Your original class material'}
             active={hasMaterial}
           />
           <Step
             number="02"
-            title="Understand"
-            description="Vision + lecture analysis"
+            title={multiPhotoPending ? 'Read lecture' : 'Understand'}
+            description={multiPhotoPending ? 'All pages in one analysis' : 'Vision + lecture analysis'}
             active={understanding || picking}
           />
           <Step
             number="03"
-            title="Notebook"
-            description="Notes, slides, quiz and Q&A"
-            active={building}
+            title={multiPhotoPending ? 'Find course signals' : 'Notebook'}
+            description={multiPhotoPending ? 'Evidence only — no auto-filing' : 'Notes, slides, quiz and Q&A'}
+            active={multiPhotoPending ? stage === 'organizing' || stage === 'saving' || stage === 'done' : building}
           />
+          {multiPhotoPending ? <Step
+            number="04"
+            title="Build preview"
+            description="Persist the combined analysis"
+            active={stage === 'saving' || stage === 'done'}
+          /> : null}
         </View> : null}
 
         <View style={styles.actions}>
-          {multiPhotoPending ? (
+          {multiPhotoPending && !error && stage !== 'done' ? (
             <Pressable
               accessibilityRole="button"
               onPress={() => router.back()}
-              style={({ pressed }) => [styles.primaryButton, pressed && styles.pressed]}
+              style={({ pressed }) => [styles.secondaryButton, pressed && styles.pressed]}
             >
-              <ThemedText style={styles.primaryButtonText}>Review captured photos</ThemedText>
+              <ThemedText style={styles.secondaryButtonText}>Review captured photos</ThemedText>
             </Pressable>
           ) : null}
 
@@ -653,6 +748,18 @@ function Step({
           {description}
         </ThemedText>
       </View>
+    </View>
+  );
+}
+
+function AnalysisList({ title, items }: { title: string; items: string[] }) {
+  if (!items.length) return null;
+  return (
+    <View style={styles.resultList}>
+      <ThemedText type="smallBold" style={styles.resultLabel}>{title}</ThemedText>
+      {items.map((item) => (
+        <ThemedText key={item} themeColor="textSecondary" style={styles.body}>• {item}</ThemedText>
+      ))}
     </View>
   );
 }
@@ -808,6 +915,50 @@ const styles = StyleSheet.create({
   body: {
     fontSize: 14,
     lineHeight: 22,
+  },
+
+  resultSection: {
+    gap: 16,
+    padding: 20,
+    borderRadius: 22,
+    backgroundColor: '#F7F8F4',
+    borderWidth: 1,
+    borderColor: '#DDE5DA',
+  },
+
+  pageResult: {
+    gap: 8,
+    padding: 15,
+    borderRadius: 16,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#E1E6DF',
+  },
+
+  resultHeading: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+
+  extraction: {
+    fontSize: 14,
+    lineHeight: 22,
+  },
+
+  unclear: {
+    color: '#875A22',
+  },
+
+  resultList: {
+    gap: 5,
+  },
+
+  resultLabel: {
+    color: Brand.forest,
+    fontSize: 10,
+    letterSpacing: 1.2,
   },
 
   pickerSection: {

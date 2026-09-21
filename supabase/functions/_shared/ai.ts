@@ -56,6 +56,27 @@ export async function loadPhoto(origin: string, headers: Record<string, string>,
   return { mime, image };
 }
 
+export async function loadCapturePhoto(origin: string, headers: Record<string, string>, ownerId: string, captureId: string, storagePath: unknown, signal: AbortSignal, fetcher: typeof fetch, limit = 10 * 1024 * 1024) {
+  const path = storagePath;
+  const match = typeof path === 'string'
+    ? /^captures\/([0-9a-f-]+)\/([0-9a-f-]+)\/photo\.(jpg|png)$/.exec(path)
+    : null;
+  if (!match || match[1] !== ownerId || match[2] !== captureId) {
+    throw new Failure(422, 'PATH', 'Invalid capture photo storage path.');
+  }
+  const imageResponse = await fetcher(`${origin}/storage/v1/object/authenticated/lecture-materials/${path}`, { headers, signal });
+  if (!imageResponse.ok) throw new Failure(502, 'STORAGE', 'Could not read a stored capture photo.');
+  const mime = imageResponse.headers.get('content-type')?.split(';')[0].trim().toLowerCase();
+  if (mime !== mimeByExtension[match[3]]) throw new Failure(422, 'IMAGE_TYPE', 'Unsupported or mismatched capture photo format.');
+  if (Number(imageResponse.headers.get('content-length')) > limit) {
+    await imageResponse.body?.cancel();
+    throw new Failure(413, 'TOO_LARGE', 'Each photo must be 10 MiB or smaller.');
+  }
+  const image = await boundedBytes(imageResponse.body, limit);
+  if (!image.length) throw new Failure(422, 'EMPTY_IMAGE', 'A stored capture photo is empty.');
+  return { mime, image };
+}
+
 export function requestGemini(fetcher: typeof fetch, key: string, signal: AbortSignal, prompt: string, parts: unknown[], schema: unknown, maxOutputTokens: number) {
   return fetcher('https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite:generateContent', {
     method: 'POST', signal,

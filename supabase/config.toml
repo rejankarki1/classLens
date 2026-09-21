@@ -4,6 +4,10 @@ project_id = "classlens"
 verify_jwt = false
 entrypoint = "./functions/analyze-material/index.ts"
 
+[functions.analyze-captures]
+verify_jwt = true
+entrypoint = "./functions/analyze-captures/index.ts"
+
 [functions.ask-lecture]
 verify_jwt = false
 entrypoint = "./functions/ask-lecture/index.ts"

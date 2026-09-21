@@ -120,6 +120,7 @@ function request(body = JSON.stringify({ materialId: id }), headers = {}, method
     if (name === '@/lib/askLecture') return require('../../../src/lib/askLecture.ts');
     if (name === '@/lib/dataMode') return { getDataMode: () => mode };
     if (name === '@/lib/lectureAnalysis') return { parseLectureAnalysis };
+    if (name === '@/lib/captureAnalysis') return require('../../../src/lib/captureAnalysis.ts');
     if (name === '@/lib/supabase') return { supabase: { functions: { invoke: async (name, options) => {
       assert.equal(name, 'analyze-material'); assert.equal(JSON.stringify(options.body), JSON.stringify({ materialId: id }));
       invoked++; return result;

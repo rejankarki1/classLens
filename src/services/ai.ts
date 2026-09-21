@@ -1,9 +1,53 @@
+import { FunctionsHttpError } from '@supabase/supabase-js';
+
 import { parseQuizInput, parseQuizResult } from '@/lib/quiz';
 import { parseAskLectureInput, parseAskLectureResult } from '@/lib/askLecture';
-import type { LectureAnalysis, Material, GenerateQuizResult, AskLectureResult } from '@/types';
+import type { CaptureAnalysis, LectureAnalysis, Material, GenerateQuizResult, AskLectureResult } from '@/types';
 
 import { getDataMode } from '@/lib/dataMode';
 import { parseLectureAnalysis } from '@/lib/lectureAnalysis';
+import { parseCaptureAnalysis } from '@/lib/captureAnalysis';
+
+type StructuredFunctionError = { code: string; message: string };
+
+function parseStructuredFunctionError(value: unknown): StructuredFunctionError | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const body = value as Record<string, unknown>;
+  const candidate = body.error && typeof body.error === 'object' && !Array.isArray(body.error)
+    ? body.error as Record<string, unknown>
+    : body;
+  if (typeof candidate.code !== 'string' || typeof candidate.message !== 'string') return null;
+  const code = candidate.code.trim();
+  const message = candidate.message.replace(/\s+/g, ' ').trim();
+  if (!/^[A-Z][A-Z0-9_]{0,63}$/.test(code) || !message || message.length > 500) return null;
+  return { code, message };
+}
+
+async function captureFunctionError(error: unknown): Promise<Error> {
+  const fallback = 'Combined lecture analysis failed. Please try again.';
+  if (!(error instanceof FunctionsHttpError)) return new Error(fallback);
+
+  const context = error.context as {
+    status?: unknown;
+    clone?: () => { json?: () => Promise<unknown> };
+    json?: () => Promise<unknown>;
+  } | null;
+  const httpStatus = typeof context?.status === 'number' ? context.status : null;
+  let structured: StructuredFunctionError | null = null;
+  try {
+    const readable = typeof context?.clone === 'function' ? context.clone() : context;
+    if (typeof readable?.json === 'function') {
+      structured = parseStructuredFunctionError(await readable.json());
+    }
+  } catch {
+    // Non-JSON relay/gateway responses use the friendly fallback below.
+  }
+
+  const errorCode = structured?.code ?? 'UNSTRUCTURED_HTTP_ERROR';
+  const safeMessage = structured?.message ?? fallback;
+  if (__DEV__) console.error({ httpStatus, errorCode, message: safeMessage });
+  return new Error(structured ? `${structured.code}: ${structured.message}` : fallback);
+}
 
 export async function analyzeMaterial(material: Material): Promise<LectureAnalysis> {
   if (getDataMode() !== 'supabase') throw new Error('Analysis requires EXPO_PUBLIC_DATA_MODE=supabase.');
@@ -21,6 +65,34 @@ export async function analyzeMaterial(material: Material): Promise<LectureAnalys
     throw new Error(message);
   }
   return parseLectureAnalysis(data);
+}
+
+export async function analyzeCaptures(sessionId: string, captureIds: string[]): Promise<CaptureAnalysis> {
+  if (getDataMode() !== 'supabase') throw new Error('Capture analysis requires EXPO_PUBLIC_DATA_MODE=supabase.');
+  if (!sessionId.trim() || captureIds.length < 1 || captureIds.length > 6) {
+    throw new Error('Capture analysis requires one to six photos from a session.');
+  }
+  const { supabase } = await import('@/lib/supabase');
+  const { data, error } = await supabase.functions.invoke('analyze-captures', {
+    body: { sessionId, captureIds },
+  });
+  if (error) throw await captureFunctionError(error);
+  const parsed = parseCaptureAnalysis(data, captureIds);
+  if (parsed.sessionId !== sessionId) throw new Error('Capture analysis session does not match this lecture.');
+  return parsed;
+}
+
+export async function getCaptureAnalysis(sessionId: string, captureIds: string[]): Promise<CaptureAnalysis | null> {
+  if (getDataMode() !== 'supabase') return null;
+  const { supabase } = await import('@/lib/supabase');
+  const { data, error } = await supabase.from('capture_analyses')
+    .select('analysis').eq('capture_session_id', sessionId)
+    .returns<{ analysis: unknown }[]>().maybeSingle();
+  if (error) throw new Error(`Could not load saved capture analysis: ${error.message}`);
+  if (!data) return null;
+  const parsed = parseCaptureAnalysis(data.analysis, captureIds);
+  if (parsed.sessionId !== sessionId) throw new Error('Saved analysis session does not match this lecture.');
+  return parsed;
 }
 
 export async function askLecture(lectureId: string, question: string): Promise<AskLectureResult> {

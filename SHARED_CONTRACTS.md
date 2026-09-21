@@ -85,6 +85,35 @@ export type QuizQuestion = {
 };
 export type GenerateQuizResult = { title: string; questions: QuizQuestion[] };
 
+export type CaptureRecord = {
+  id: string;
+  sessionId: string;
+  clientPhotoId: string;
+  pageNumber: number;
+  storagePath: string;
+  mimeType: 'image/jpeg' | 'image/png';
+  capturedAt: string;
+  status: 'uploaded' | 'analyzing' | 'analyzed' | 'failed';
+};
+
+export type CaptureAnalysis = {
+  sessionId: string;
+  photos: {
+    captureId: string;
+    pageNumber: number;
+    readability: 'clear' | 'partial' | 'unreadable';
+    faithfulExtraction: string;
+    unclearSections: string[];
+  }[];
+  combinedSummary: string;
+  concepts: string[];
+  examples: string[];
+  assignments: string[];
+  examMentions: string[];
+  courseSignals: string[];
+  topicSignals: string[];
+};
+
 ```
 
 Quiz generation returns GenerateQuizResult, with five questions and four options
@@ -117,10 +146,13 @@ getLectures(courseId: string): Promise<Lecture[]>
 getLecture(id: string): Promise<Lecture | null>
 createLecture(input: CreateLectureInput): Promise<Lecture>
 uploadMaterial(file: MaterialUploadInput): Promise<Material>
+uploadCapture(input: CaptureUploadInput): Promise<CaptureRecord>
 attachMaterialToLecture(materialId: string, lectureId: string): Promise<Material>
 getMaterials(lectureId: string): Promise<Material[]>
 getMaterialUrl(material: Material, expiresInSeconds?: number): Promise<string | null>
 analyzeMaterial(material: Material): Promise<LectureAnalysis>
+analyzeCaptures(sessionId: string, captureIds: string[]): Promise<CaptureAnalysis>
+getCaptureAnalysis(sessionId: string, captureIds: string[]): Promise<CaptureAnalysis | null>
 askLecture(lectureId: string, question: string): Promise<AskLectureResult>
 generateQuiz(lectureId: string): Promise<GenerateQuizResult>
 ```
@@ -305,6 +337,19 @@ and private Storage reads use existing anon RLS; no admin key or schema changes.
 
 See supabase/functions/analyze-material/README.md for manual secret setup, deployment,
 request/error details, and testing. No Gemini credential belongs in Expo configuration.
+
+### Multi-photo capture analysis
+
+Multi-photo CaptureSessions use owner-scoped `captures` rows and private objects at
+`captures/<owner-id>/<capture-id>/photo.<extension>`. Each page uploads independently.
+The capture ID is deterministic for the owner, session, and client photo ID, so a
+retry reads the existing row instead of uploading another object.
+
+`analyze-captures` requires an authenticated user, verifies that every requested
+capture belongs to that user and session, loads every page, and sends all pages in
+one Gemini request. It persists one `capture_analyses` row per owner/session and
+returns that saved analysis on retries. The result is an analysis preview boundary;
+Milestone 3 does not create a course, lecture session, or notebook from it.
 
 ### Ask This Lecture
 
