@@ -1,5 +1,5 @@
 export type { Course, CreateCourseInput } from '@/features/courses/types';
-export type { Lecture, LectureAnalysis, CreateLectureInput, Quiz } from '@/features/lectures/types';
+export type { Lecture, LectureAnalysis, CreateLectureInput, Quiz, NotebookCorrection } from '@/features/lectures/types';
 export type {
   Material,
   MaterialUploadInput,

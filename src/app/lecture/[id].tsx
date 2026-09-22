@@ -9,6 +9,7 @@ import {
   Image,
   Pressable,
   StyleSheet,
+  TextInput,
   View,
 } from 'react-native';
 
@@ -33,11 +34,14 @@ import { getLecture } from '@/services/lectures';
 import { getCourse } from '@/services/courses';
 import { getMaterialUrl, getMaterials } from '@/services/materials';
 import { getLectureCaptureAnalysis } from '@/services/ai';
+import { getNotebookCorrections, saveNotebookCorrection } from '@/services/notebookCorrections';
 
 import type {
   Course,
   Lecture,
   CaptureAnalysis,
+  CapturePhotoAnalysis,
+  NotebookCorrection,
 } from '@/types';
 
 export default function LectureNotebookScreen() {
@@ -64,6 +68,11 @@ export default function LectureNotebookScreen() {
     useState<string[]>([]);
   const [captureAnalysis, setCaptureAnalysis] = useState<CaptureAnalysis | null>(null);
 
+  const [corrections, setCorrections] = useState<Map<number, NotebookCorrection>>(new Map());
+  const [editingPage, setEditingPage] = useState<number | null>(null);
+  const [draftText, setDraftText] = useState('');
+  const [savingPage, setSavingPage] = useState<number | null>(null);
+
   useEffect(() => {
     let active = true;
 
@@ -71,6 +80,8 @@ export default function LectureNotebookScreen() {
       try {
         setLoading(true);
         setError(false);
+        setEditingPage(null);
+        setSavingPage(null);
 
         const nextLecture =
           await getLecture(id);
@@ -102,9 +113,10 @@ export default function LectureNotebookScreen() {
         // Originals are supporting content: a failure here must not take down
         // the notebook the student came to read.
         try {
-          const [materials, savedAnalysis] = await Promise.all([
+          const [materials, savedAnalysis, savedCorrections] = await Promise.all([
             getMaterials(nextLecture.id),
             getLectureCaptureAnalysis(nextLecture.id),
+            getNotebookCorrections(nextLecture.id),
           ]);
 
           const urls =
@@ -125,10 +137,14 @@ export default function LectureNotebookScreen() {
             )
           );
           setCaptureAnalysis(savedAnalysis);
+          setCorrections(
+            new Map(savedCorrections.map((correction) => [correction.pageNumber, correction]))
+          );
         } catch {
           if (active) {
             setOriginals([]);
             setCaptureAnalysis(null);
+            setCorrections(new Map());
           }
         }
       } catch {
@@ -148,6 +164,33 @@ export default function LectureNotebookScreen() {
       active = false;
     };
   }, [id, attempt]);
+
+  async function commitCorrection(photo: CapturePhotoAnalysis, draft: string) {
+    setEditingPage(null);
+
+    const currentText = corrections.get(photo.pageNumber)?.correctedText ?? photo.faithfulExtraction;
+    const nextText = draft.trim();
+
+    if (!nextText || nextText === currentText.trim() || !lecture) {
+      return;
+    }
+
+    try {
+      setSavingPage(photo.pageNumber);
+      const saved = await saveNotebookCorrection({
+        lectureId: lecture.id,
+        captureId: photo.captureId,
+        pageNumber: photo.pageNumber,
+        originalText: photo.faithfulExtraction,
+        correctedText: nextText,
+      });
+      setCorrections((previous) => new Map(previous).set(photo.pageNumber, saved));
+    } catch {
+      // Keep the previously saved (or AI) text visible; the student can retry the tap.
+    } finally {
+      setSavingPage(null);
+    }
+  }
 
   if (loading) {
     return (
@@ -318,16 +361,69 @@ export default function LectureNotebookScreen() {
 
       {captureAnalysis ? (
         <NotebookSection number="00" eyebrow="FAITHFUL EXTRACTION" title="What ClassLens could read">
+          <ThemedText type="small" themeColor="textSecondary" style={styles.sectionDescription}>
+            Tap any page&apos;s text to fix it. Your correction is what shows here; the
+            original AI reading stays underneath.
+          </ThemedText>
+
           <View style={styles.takeawayList}>
-            {captureAnalysis.photos.map((photo) => (
-              <View key={photo.captureId} style={styles.takeawayCard}>
-                <View style={styles.takeawayIndex}><ThemedText allowFontScaling={false} style={styles.takeawayIndexText}>{String(photo.pageNumber).padStart(2, '0')}</ThemedText></View>
-                <View style={{ flex: 1, gap: 5 }}>
-                  <ThemedText style={styles.takeawayText}>{photo.faithfulExtraction || 'No readable text was found on this page.'}</ThemedText>
-                  <ThemedText type="small" themeColor="textSecondary">Readability: {photo.readability}{photo.unclearSections.length ? ` · Unclear: ${photo.unclearSections.join('; ')}` : ''}</ThemedText>
+            {captureAnalysis.photos.map((photo) => {
+              const correction = corrections.get(photo.pageNumber);
+              const displayText = correction?.correctedText ?? photo.faithfulExtraction;
+              const isEditing = editingPage === photo.pageNumber;
+
+              return (
+                <View key={photo.captureId} style={styles.takeawayCard}>
+                  <View style={styles.takeawayIndex}><ThemedText allowFontScaling={false} style={styles.takeawayIndexText}>{String(photo.pageNumber).padStart(2, '0')}</ThemedText></View>
+                  <View style={{ flex: 1, gap: 5 }}>
+                    {isEditing ? (
+                      <TextInput
+                        autoFocus
+                        multiline
+                        value={draftText}
+                        onChangeText={setDraftText}
+                        onBlur={() => commitCorrection(photo, draftText)}
+                        onSubmitEditing={() => commitCorrection(photo, draftText)}
+                        accessibilityLabel={`Edit extracted text for page ${photo.pageNumber}`}
+                        style={styles.correctionInput}
+                      />
+                    ) : (
+                      <Pressable
+                        accessibilityRole="button"
+                        accessibilityLabel={`Tap to edit extracted text for page ${photo.pageNumber}`}
+                        onPress={() => {
+                          setDraftText(displayText);
+                          setEditingPage(photo.pageNumber);
+                        }}
+                      >
+                        <ThemedText style={styles.takeawayText}>
+                          {displayText || 'No readable text was found on this page.'}
+                        </ThemedText>
+                      </Pressable>
+                    )}
+
+                    {correction ? (
+                      <View style={styles.correctionOriginal}>
+                        <ThemedText type="small" themeColor="textSecondary" style={styles.correctionOriginalLabel}>
+                          CORRECTED BY YOU · original AI extraction:
+                        </ThemedText>
+                        <ThemedText type="small" themeColor="textSecondary">
+                          {correction.originalText || 'No readable text was found on this page.'}
+                        </ThemedText>
+                      </View>
+                    ) : null}
+
+                    {savingPage === photo.pageNumber ? (
+                      <ActivityIndicator size="small" color={Brand.forest} />
+                    ) : (
+                      <ThemedText type="small" themeColor="textSecondary">
+                        Page {photo.pageNumber} · Readability: {photo.readability}{photo.unclearSections.length ? ` · Unclear: ${photo.unclearSections.join('; ')}` : ''}
+                      </ThemedText>
+                    )}
+                  </View>
                 </View>
-              </View>
-            ))}
+              );
+            })}
           </View>
           {captureAnalysis.examples.length ? <View style={styles.summaryBlock}><View style={styles.summaryAccent} /><ThemedText style={styles.summaryText}>Examples: {captureAnalysis.examples.join(' · ')}</ThemedText></View> : null}
         </NotebookSection>
@@ -1151,6 +1247,35 @@ const styles = StyleSheet.create({
     minWidth: 0,
     fontSize: 14,
     lineHeight: 22,
+  },
+
+  correctionInput: {
+    width: '100%',
+    minWidth: 0,
+    minHeight: 60,
+    color: onCard,
+    fontSize: 14,
+    lineHeight: 22,
+    padding: 8,
+    borderRadius: 10,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: Brand.forest,
+    textAlignVertical: 'top',
+  },
+
+  correctionOriginal: {
+    width: '100%',
+    minWidth: 0,
+    gap: 2,
+    paddingTop: 2,
+    paddingLeft: 9,
+    borderLeftWidth: 2,
+    borderLeftColor: '#C4A66A',
+  },
+
+  correctionOriginalLabel: {
+    fontWeight: '700',
   },
 
   conceptGrid: {
