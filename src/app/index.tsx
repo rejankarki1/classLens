@@ -6,7 +6,7 @@ import { ClassLensBrandMark } from "@/components/ClassLensBrandMark";
 import { CourseCard } from "@/components/CourseCard";
 import { LectureCard } from "@/components/LectureCard";
 import { ScanArtwork } from "@/components/ScanArtwork";
-import { ProcessingJobsStatus } from "@/components/ProcessingJobsStatus";
+import { HomeInbox } from "@/components/HomeInbox";
 import { ThemedText } from "@/components/themed-text";
 import { AppButton } from "@/components/ui/AppButton";
 import {
@@ -135,7 +135,7 @@ export default function HomeScreen() {
           </Pressable>
         </View>
 
-        <ProcessingJobsStatus />
+        <HomeInbox />
 
         {/* ───────────────── INTRO ───────────────── */}
 

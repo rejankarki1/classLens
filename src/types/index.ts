@@ -23,4 +23,6 @@ export type {
   CourseMatch,
   PhotoProcessingInput,
   ProcessingJobEvent,
+  InboxEventType,
+  InboxEvent,
 } from '@/features/processing/types';

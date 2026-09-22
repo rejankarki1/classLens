@@ -53,3 +53,13 @@ export type PhotoProcessingInput = {
 };
 
 export type ProcessingJobEvent = 'course_needed' | 'failure' | 'completed';
+
+/** Session G: durable, server-created inbox rows -- see inbox_events (owner-only reads). */
+export type InboxEventType = 'ready' | 'course_needed' | 'final_failure';
+
+export type InboxEvent = {
+  id: string;
+  eventType: InboxEventType;
+  createdAt: string;
+  job: ProcessingJob;
+};

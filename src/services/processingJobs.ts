@@ -2,6 +2,8 @@ import { randomUUID } from 'expo-crypto';
 
 import type { CaptureSession } from '@/features/capture/captureSession';
 import type {
+  InboxEvent,
+  InboxEventType,
   ProcessingJob,
   ProcessingJobEvent,
   ProcessingJobStage,
@@ -97,6 +99,35 @@ export async function getRunnableProcessingJobs(limit = 3): Promise<ProcessingJo
     .order('created_at').limit(limit).returns<JobRow[]>();
   if (error) throw new Error(`Could not load unfinished processing jobs: ${error.message}`);
   return data.map(fromRow);
+}
+
+/**
+ * Session G: jobs still in flight -- not yet at a durable inbox outcome
+ * (completed/course_needed/terminal_failed all get an inbox_events row
+ * instead; see getInboxEvents). retryable_failed is included here rather
+ * than in the inbox because it is transient, not a durable outcome.
+ */
+export async function getActiveProcessingJobs(limit = 5): Promise<ProcessingJob[]> {
+  const supabase = await client();
+  const { data, error } = await supabase.from('processing_jobs').select(processingJobColumns)
+    .in('stage', ['queued', 'uploading', 'uploaded', 'analyzing', 'filing', 'retryable_failed'])
+    .order('updated_at', { ascending: false }).limit(limit).returns<JobRow[]>();
+  if (error) throw new Error(`Could not load active processing jobs: ${error.message}`);
+  return data.map(fromRow);
+}
+
+type InboxEventRow = { id: string; event_type: InboxEventType; created_at: string; processing_jobs: JobRow };
+
+/** Session G: the durable inbox -- one row per completed/course_needed/terminal_failed transition. */
+export async function getInboxEvents(limit = 20): Promise<InboxEvent[]> {
+  const supabase = await client();
+  const { data, error } = await supabase.from('inbox_events')
+    .select(`id, event_type, created_at, processing_jobs (${processingJobColumns})`)
+    .order('created_at', { ascending: false }).limit(limit).returns<InboxEventRow[]>();
+  if (error) throw new Error(`Could not load inbox: ${error.message}`);
+  return data
+    .filter((row): row is InboxEventRow & { processing_jobs: JobRow } => Boolean(row.processing_jobs))
+    .map((row) => ({ id: row.id, eventType: row.event_type, createdAt: row.created_at, job: fromRow(row.processing_jobs) }));
 }
 
 export async function updateProcessingJob(id: string, runnerToken: string | null, values: Record<string, unknown>): Promise<ProcessingJob> {
