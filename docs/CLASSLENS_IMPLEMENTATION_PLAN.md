@@ -1,1378 +1,524 @@
-# ClassLens Evolution — Full Implementation Plan (≤20 Users)
+# ClassLens — Implementation Plan
 
-> **Authoritative project plan.** Build incrementally for 10–20 users, preserve working behavior, and avoid premature deployment-scale infrastructure. Use `expo-background-task` for background resume work; `expo-background-fetch` is deprecated.
+**Status as of this revision:** Session A (migration reconciliation) is complete and recorded in
+`docs/CLASSLENS_MIGRATION_STATUS.md`. Session B (claim/lease schema) has not started. This file
+is the single authoritative plan — supersedes any earlier copy of
+`docs/CLASSLENS_IMPLEMENTATION_PLAN.md` in this repo.
 
-Same vision, same features, and same depth as the original analysis. Every feature ships. No over-engineering for scale we don't have yet.
-
----
-
-## What This Plan Builds
-
-Everything from the original analysis, with infrastructure sized for reality:
-
-| Feature | Status |
-|---|---|
-| ✅ Rapid continuous camera capture (instant shutter, camera stays live) | Build it |
-| ✅ On-device blur/exposure detection before upload | Build it |
-| ✅ Retake / Keep Anyway quality feedback | Build it |
-| ✅ Multi-photo capture sessions (up to 6 per session) | Build it |
-| ✅ Session grouping (time + schedule + AI signals) | Build it |
-| ✅ Course enrollment + schedule awareness | Build it |
-| ✅ Evolved `CaptureAnalysis` contract (faithful extraction + organization) | Build it |
-| ✅ Improved data model (full ERD, 10 tables) | Build it |
-| ✅ Background processing resilience (resume after app close) | Build it |
-| ✅ Automatic CatchUp evaluation (pg_cron scheduled job) | Build it |
-| ✅ CatchUp push notifications (Expo Notifications) | Build it |
-| ✅ CatchUp review + "Add to My Notes" | Build it |
-| ✅ Semester notebook view | Build it |
-| ✅ Faithful vs. AI layer separation in UI | Build it |
-| ✅ Ask This Lecture + Quiz (reconnected to new model) | Build it |
-
-## What We Size Down (Not Remove)
-
-| Original Analysis (100K) | This Plan (≤20 users) |
-|---|---|
-| Background URLSession (iOS system-level uploads when app is killed) | `expo-background-task` for resume — good enough at 20 users |
-| pgBouncer connection pooling | Supabase default pooling is fine |
-| CDN for thumbnails | Generate thumbnails, serve from Storage directly |
-| pgvector semantic search | PostgreSQL full-text search (revisit at 50+ lectures/user) |
-| Tiered Gemini models (Flash + Flash Lite) | Single model: `gemini-3.1-flash-lite` (already deployed) |
-| Batch cost optimization (4 photos → 1 call) | Still batch — but for quality, not cost savings |
-| Dedicated image compression pipeline | Client-side quality 0.8 + size check before upload |
-| Abuse/moderation pipeline | Trust the 20 users |
-| Geographic distribution | Single region |
-| Rate limiting on Edge Functions | Supabase built-in limits suffice |
-| Storage lifecycle (cold storage after 6 months) | Skip — storage cost is negligible at this scale |
-| Provider interface abstraction | Direct Gemini calls — swap later if needed |
-| Share extension (iOS) | Defer — validate camera habit first, build if needed |
-| react-native-vision-camera frame processors for blur | Simpler post-capture blur check using `expo-image-manipulator` pixel analysis |
-
-## Hosting & Cost
-
-**You don't deploy anything.** The app talks directly to your existing Supabase project. When a real student installs the app and signs up, they connect to the same Supabase project you already have — no extra server, no DevOps.
-
-| Service | Free Limit | Usage at 5–6 real users | Cost |
-|---|---|---|---|
-| **Supabase Free** | 500MB DB, 1GB Storage, 500K Edge calls/mo | ~50MB DB, ~200MB photos, ~500 calls/mo | **$0** |
-| **Gemini Free tier** | ~1,000–1,500 req/day, 5–15 req/min | ~25 calls/day | **$0** |
-| **Expo push notifications** | Free | ~10–20 notifs/day | **$0** |
-| **Supabase Pro** | — | Not needed at this scale | **Skip** |
-
-> [!IMPORTANT]
-> **Supabase free projects pause after 7 days of inactivity.** During an active semester this won't happen. Over a long holiday break it could. Fix: one `pg_cron` job that runs every 5 days — added in Milestone 1.
-
-> [!NOTE]
-> **Gemini 429 rate limit:** If 5 students all tap Analyze at the same second you could hit the 5–15 req/min limit. The existing error handling catches this gracefully. At 5–6 real users in practice, collisions are very unlikely.
-
-**Total cost at 5–6 active users: $0/month.**
+**Source of truth for live implementation:** the current repository and the linked Supabase
+project's actual schema/deployments (`yeneypkyvdfpdtspswha`), not this document. Where this
+document and the live repo/database disagree, the repo and database win — re-verify rather than
+trust a stale paragraph here.
 
 ---
 
-## A. Complete User Workflows
+## 1. Product vision
 
-### Primary Flow: Rapid Capture with Quality Check
+ClassLens helps a student capture class material quickly and turn it into an accurate, organized,
+searchable notebook:
 
-```text
-Student opens ClassLens
-    │
-    ▼
-Camera is IMMEDIATELY active
-(no course selection, no menu, no splash screen)
-Viewfinder fills the screen, shutter button at bottom
-    │
-    ▼
-Tap shutter — INSTANT (<50ms)
-    │
-    ├──▶ Photo saved to local storage
-    ├──▶ On-device quality check runs (blur + exposure)
-    │       • Laplacian variance for blur detection
-    │       • Histogram analysis for exposure
-    │       • Pure image math — no ML model, no cloud call
-    │
-    ├── Quality GOOD:
-    │     ✓ animation, thumbnail appears in bottom strip
-    │     Camera stays live and ready — no delay
-    │
-    └── Quality BAD (blurry / too dark / too bright):
-          ⚠️ Quick overlay on the thumbnail:
-          ┌─────────────────────────────┐
-          │ ⚠️ This looks blurry        │
-          │ [Retake]  [Keep Anyway]     │
-          └─────────────────────────────┘
-          • "Retake" discards and reopens shutter
-          • "Keep Anyway" adds it with a ⚠️ badge
-          • Overlay auto-dismisses after 3s → Keep Anyway
-          Camera STAYS LIVE during this overlay
-    │
-    ▼
-Tap shutter again (another photo) — still instant
-    │
-    ▼
-... repeat N times (up to 6 photos per session) ...
+1. Capture up to six photos without interrupting the camera flow. Run blur and exposure checks
+   asynchronously on-device and let the student retake a poor image or keep it.
+2. Stage original photos locally. Create a separate compressed upload copy, tuned to retain small
+   handwriting, equations, and diagrams. Keep local originals until the complete upload contract
+   is verified.
+3. Upload to private Supabase Storage and persist capture metadata. "Uploaded" means every
+   expected object and capture row is confirmed and a durable server-ready job exists. If the app
+   closes before that point, resume upload later. Do not promise iOS force-quit upload completion.
+4. After Uploaded, a server worker claims the job, reuses valid saved analysis, extracts faithful
+   content per page, creates organized notes, matches only enrolled courses using content signals
+   and optional schedule, and files exactly one notebook. The phone displays authorized server
+   state and accepts manual course selection; it does not run post-upload AI or filing.
+5. Present a text-first notebook: course and date; ordered faithful extraction and unclear
+   passages with source-page references; separately labeled AI summary, concepts, examples,
+   assignments, and exam mentions; and student corrections.
+6. Keep originals private and reviewable for seven days after successful processing. A scheduled,
+   idempotent cleanup then removes cloud originals. The app removes temporary phone copies only
+   after confirming the server deleted cloud originals, including on a later launch after offline
+   use. Failed, unfinished, and review-needed inputs are not automatically deleted. After deletion,
+   image-based reanalysis is unavailable.
 
-Bottom strip always visible:
-┌─────────────────────────────────────────┐
-│ [📷✓] [📷✓] [📷⚠️] [📷✓]  [+ Add]     │
-│  tap to preview / remove any photo      │
-└─────────────────────────────────────────┘
-    │
-    ▼
-Tap "Done" (or close camera)
-    │
-    ▼
-Session review screen:
-┌─────────────────────────────────────┐
-│ 4 LECTURE PAGES                     │
-│ [📷] [📷] [📷⚠️] [📷]              │
-│  (tap to enlarge, swipe to remove)  │
-│                                     │
-│ ┌─────────────────────────────────┐ │
-│ │ 📍 Looks like CS 3358           │ │
-│ │    Data Structures              │ │
-│ │    Mon/Wed 10:00–11:20          │ │
-│ │    [Change course]              │ │
-│ └─────────────────────────────────┘ │
-│                                     │
-│ [Continue to analysis →]            │
-│ [Add more photos]                   │
-│ [Retake photo 3 ⚠️]                │
-└─────────────────────────────────────┘
-    │
-    ▼
-Upload + Analyze (foreground, with background resilience)
-    │
-    ▼
-Processing screen shows:
-  "Uploading photo 2/4…"
-  "Reading your lecture…"
-  "Finding where this belongs…"
-  "Building your notebook…"
-    │
-    ├── IF app stays open: completes normally
-    │
-    └── IF app is closed / backgrounded:
-          Captures already uploaded are safe in Supabase.
-          On next open, processing screen resumes from
-          where it left off (checks capture statuses).
-          No duplicate uploads, no duplicate analysis.
-    │
-    ▼
-Course confirmation (if ambiguous)
-    │
-    ▼
-Lecture notebook opens
+Retain notebook text, faithful extraction, corrections, page references, analysis metadata, and job
+outcome/audit metadata in Postgres. Track cleanup eligibility, attempts, completion time, and last
+safe error. Confirm object absence before marking cleanup complete; retry partial failures. Image
+cleanup does not remove the notebook. User-requested notebook deletion is a separate, explicit
+action from the seven-day image cleanup — define its cascade separately and never let one silently
+trigger the other.
+
+The rest of the product includes onboarding/auth polish; a semester course timeline; grounded Ask
+with page references and explicit uncertainty; quizzes and missed-question review; PDF import;
+audio recording/import with timestamped transcript; video with audio transcript and selected
+visual frames; and owner-opt-in CatchUp sharing of completed notebook content. Friendship or shared
+enrollment alone never grants access. Set size/duration limits, cost measurement, and retention for
+each format as part of its own milestone, before implementation — see §7.
+
+**Do not assume the Supabase Free plan retains a semester of originals.** This project is
+confirmed on free tier (see §6). Measure real image sizes, database growth, AI requests/tokens,
+and upload/download bandwidth as the pilot runs; document when to upgrade or reduce retention.
+
+## 2. Screens and journeys
+
+- Onboarding, sign-up, sign-in, profile, and course enrollment.
+- Home with courses, recent notebooks, durable processing status, inbox notices, and recovery
+  actions.
+- Camera capture, photo quality feedback, session review, and upload progress.
+- Processing status, retry/review state, and course resolution for low-confidence matches.
+- Course catalog, course detail, optional schedule setup, and semester timeline.
+- Text-first notebook, original-photo review while retained, and correction editor.
+- Ask, quiz, and missed-question review.
+- PDF import; audio recording/import and transcript review; video import, transcript, and
+  selected-frame review.
+- CatchUp inbox, scoped read-only preview, and explicit Add to My Notes action.
+- Settings for notification permission, privacy, retention, and account actions.
+
+## 3. Architecture
+
+The server owns every step after the upload contract reaches Uploaded. Push is a hint only; the
+app fetches current authorized state using the job ID.
+
+```mermaid
+flowchart LR
+  PHONE[iPhone app<br/>capture, staging, status, course choice]
+  STORAGE[(Private Supabase Storage<br/>originals and upload copies)]
+  DB[(Postgres<br/>jobs, captures, analyses, notebooks, inbox)]
+  SCHEDULE[pg_cron recovery and cleanup schedules]
+  WORKER[Supabase Edge Function worker]
+  GEMINI[Gemini]
+  PUSH[Push provider]
+  NOTE[Authorized text-first notebook]
+
+  PHONE -->|upload copy| STORAGE
+  PHONE -->|verified rows and job state| DB
+  DB -->|atomic claim / leased job| WORKER
+  SCHEDULE -->|recover ready jobs / expired leases, via pg_net| WORKER
+  WORKER -->|read private originals| STORAGE
+  WORKER -->|analysis request| GEMINI
+  GEMINI -->|page extraction and notes| WORKER
+  WORKER -->|analysis, filing, inbox event| DB
+  DB -->|authorized state and notebook| PHONE
+  DB -->|job ID only| PUSH
+  PUSH -->|job ID only| PHONE
+  PHONE --> NOTE
+  SCHEDULE -->|delete eligible originals; record result| STORAGE
+  SCHEDULE --> DB
 ```
 
-### Secondary Flow: Review Semester Notebook
+**Execution model, made concrete (not left as a diagram box):** Supabase Edge Functions are
+request-triggered, not long-running daemons. `pg_cron` is enabled by default on every Supabase
+project including free tier, so the recovery/cleanup schedules run as `pg_cron` jobs that use
+`pg_net` to `POST` into the worker Edge Function on a fixed interval, picking up ready jobs and
+expired leases. Confirm current Edge Function execution-time limits before assuming a full
+claim → analyze → file cycle fits in one invocation; if a multi-page Gemini call risks exceeding
+it, the worker renews its own lease partway through rather than hoping the call finishes first.
 
-```text
-Student opens ClassLens → Home
-    │
-    ▼
-Home screen shows courses + recent sessions
-┌─────────────────────────────────────┐
-│ CS 3358 · Data Structures           │
-│ 3 sessions this month               │
-│                                     │
-│ MATH 2471 · Calculus III            │
-│ 2 sessions this month               │
-└─────────────────────────────────────┘
-    │
-    ▼
-Tap CS 3358
-    │
-    ▼
-Course view: semester timeline of lecture sessions
-┌─────────────────────────────────────┐
-│ Sept 15 · Binary Search Trees       │
-│ 4 captures · Ready                  │
-│                                     │
-│ Sept 13 · Linked Lists              │
-│ 2 captures · Ready                  │
-│                                     │
-│ Sept 10 · Arrays and Pointers       │
-│ 3 captures · Ready                  │
-└─────────────────────────────────────┘
-    │
-    ▼
-Tap September 15 session
-    │
-    ▼
-Lecture notebook:
-┌─────────────────────────────────────┐
-│ 🖼️ ORIGINAL MATERIAL               │
-│ [photo 1] [photo 2] [photo 3] [4]  │
-│                                     │
-│ 📝 FAITHFUL EXTRACTION              │
-│ "What was actually readable"        │
-│ ⚠️ "Section in top-right was        │
-│     unreadable due to glare"        │
-│                                     │
-│ 🧠 AI STUDY NOTES                   │
-│ Summary: ...                        │
-│ Key Concepts: ...                   │
-│ Important Points: ...               │
-│ Assignments: ...                    │
-│ Exam Mentions: ...                  │
-│                                     │
-│ [💬 Ask This Lecture]               │
-│ [📝 Generate Quiz]                  │
-└─────────────────────────────────────┘
+**Claim/lease as one atomic statement.** No separate SELECT-then-UPDATE (races):
+
+```sql
+UPDATE processing_jobs
+SET status = 'analyzing', worker_run_id = $1, lease_expires_at = now() + interval '$2 seconds'
+WHERE id = $3
+  AND status = 'uploaded'
+  AND (lease_expires_at IS NULL OR lease_expires_at < now())
+RETURNING *;
 ```
 
-### CatchUp Flow
+Every later worker write to that job includes `AND worker_run_id = $current_run_id`, so a stale
+runner (lease expired, job reclaimed) fails to commit instead of silently overwriting a newer
+attempt.
 
-```text
-After class ends + 40 min grace period:
+**RLS vs. service role.** The worker's Supabase client uses the service-role key, which bypasses
+RLS entirely — RLS on `processing_jobs`, `captures`, etc. protects the phone client, not the
+worker. The worker's own safety comes from always scoping queries by `owner_id`/`job_id`
+explicitly in SQL, and from never exposing the service-role key to the client bundle.
 
-Supabase scheduled function evaluates:
-  Rejan has 0 captures for CS 3358 Sept 15 session
-  Prashant has 4 captures for CS 3358 Sept 15 session
-  They are accepted friends + both enrolled in CS 3358
-    │
-    ▼
-Create catchup_opportunity row
-Send push notification to Rejan:
-"CS 3358 notes available from today's lecture.
- Prashant captured 4 pages."
-    │
-    ▼
-Rejan opens ClassLens → CatchUp tab
-    │
-    ▼
-CatchUp screen:
-┌─────────────────────────────────────┐
-│ 🤝 MISSED CLASS?                    │
-│                                     │
-│ CS 3358 · Sept 15                   │
-│ From: Prashant Bhattarai            │
-│ 4 captures · Binary Search Trees    │
-│                                     │
-│ [View Notes]                        │
-└─────────────────────────────────────┘
-    │
-    ▼
-CatchUp review (read-only):
-  - Prashant's original captures
-  - Faithful extraction
-  - AI-organized notebook
-  - [➕ Add to My Notes]
-    │
-    ▼
-"Add to My Notes" creates Rejan's own copy:
-  - Own session_notebook (independent text)
-  - Read-only reference to Prashant's captures
-  - Credits: "via Prashant"
-  - Rejan can now Ask/Quiz on this lecture
+**Idempotent filing.** A unique constraint on `(owner_id, job_id)` or `(owner_id, session_id)` in
+the notebook-linking table enforces "repeated filing returns the same notebook" at the database
+level, not only in application logic.
+
+**Push payload stays minimal.** Push carries only the job ID; the app fetches authorized current
+state on open. A denied push permission never blocks correctness, only speed of notice.
+
+### App flows
+
+**Capture and upload:**
+```mermaid
+flowchart TD
+  H[Home] --> C[Camera capture]
+  C --> Q[Async blur and exposure check]
+  Q --> R[Review up to six photos]
+  R --> S[Local staging]
+  S --> U[Upload to private Storage and persist capture rows]
+  U --> V{All expected objects and rows verified?}
+  V -- No --> P[Keep local photos; resume upload later]
+  P --> U
+  V -- Yes --> J[Durable server-ready job: Uploaded]
+  J --> W[Server worker owns all later work]
+  W --> N[Text-first notebook]
 ```
 
----
+**Processing, retry, and course-needed:**
+```mermaid
+flowchart TD
+  A[Uploaded job] --> CL[Atomic claim with lease]
+  CL -->|Claim unavailable| WAIT[Recovery schedule tries later]
+  CL -->|Claimed| SA{Valid saved analysis?}
+  SA -- No --> AI[Worker analyzes private originals]
+  SA -- Yes --> NOTES[Build or reuse organized notes]
+  AI --> NOTES
+  NOTES --> MATCH[Match enrolled courses with content and optional schedule]
+  MATCH -->|Confident| FILE[Idempotent notebook filing]
+  MATCH -->|Low confidence| NEED[course_needed; inbox event and optional push]
+  NEED --> CHOOSE[Student chooses an enrolled course]
+  CHOOSE --> FILE
+  FILE --> DONE[completed; ready event]
+  CL -->|Transient error| RETRY[Retryable failure; keep inputs]
+  RETRY --> CL
+  CL -->|Permanent error or retry limit| FAIL[Final failure; keep inputs and notify]
+```
 
-## B. Evolved Data Model — Full ERD
+**Study:**
+```mermaid
+flowchart TD
+  H[Home] --> COURSE[Course]
+  COURSE --> TIMELINE[Semester timeline]
+  TIMELINE --> NOTE[Notebook]
+  NOTE --> CORRECT[Correct extraction or organized text]
+  NOTE --> ASK[Grounded Ask with page citations and uncertainty]
+  NOTE --> QUIZ[Quiz]
+  QUIZ --> REVIEW[Review missed questions]
+  NOTE --> ORIGINALS[Review private originals during retention]
+```
 
-### Entity-Relationship Diagram
+**CatchUp:**
+```mermaid
+flowchart TD
+  OWNER[Owner completes notebook] --> OPT{Owner opts in to share this notebook?}
+  OPT -- No --> PRIVATE[Notebook stays private]
+  OPT -- Yes --> READY[Eligible completed content]
+  READY --> EVENT[Create scoped CatchUp inbox event]
+  EVENT --> RECIPIENT[Recipient opens authorized preview]
+  RECIPIENT --> ADD{Recipient chooses Add to My Notes?}
+  ADD -- No --> END[No copy]
+  ADD -- Yes --> COPY[Create independently owned notebook copy]
+  COPY --> ACCESS[Access follows explicit shared-item policy]
+```
+
+## 4. Data model and retention inventory
+
+This ERD reflects what §5 (migration status) confirms is actually live, plus proposed entities not
+yet built. Not runnable SQL — verify column names against the live schema before writing new
+migrations.
 
 ```mermaid
 erDiagram
-    profiles ||--o{ course_memberships : enrolls
-    profiles ||--o{ captures : takes
-    profiles ||--o{ friendships : "requester"
-    profiles ||--o{ friendships : "addressee"
-    profiles ||--o{ session_notebooks : owns
+  AUTH_USERS ||--o{ PROFILES : has
+  PROFILES ||--o{ FRIENDSHIPS : participates
+  AUTH_USERS ||--o{ COURSE_MEMBERSHIPS : owns
+  COURSES ||--o{ COURSE_MEMBERSHIPS : enrolls
+  COURSES ||--o{ LECTURES : contains
+  AUTH_USERS ||--o{ CAPTURES : owns
+  AUTH_USERS ||--o{ CAPTURE_ANALYSES : owns
+  AUTH_USERS ||--o{ PROCESSING_JOBS : owns
+  PROCESSING_JOBS o|--o{ CAPTURES : identifies
+  CAPTURE_ANALYSES o|--o{ PROCESSING_JOBS : reused_by
+  COURSES o|--o{ PROCESSING_JOBS : selected_for
+  LECTURES o|--o{ PROCESSING_JOBS : filed_as
+  LECTURES o|--o{ CAPTURES : groups
+  LECTURES o|--o{ MATERIALS : has_legacy_materials
+  COURSES ||--o{ COURSE_SCHEDULES : scheduled_by
+  AUTH_USERS ||--o{ COURSE_SCHEDULES : owns
+  PROCESSING_JOBS ||--o{ INBOX_EVENTS : emits
+  AUTH_USERS ||--o{ INBOX_EVENTS : receives
+  AUTH_USERS ||--o{ DEVICE_PUSH_TOKENS : registers
+  LECTURES ||--o{ NOTEBOOK_CORRECTIONS : corrected_by
+  LECTURES ||--o{ CATCHUP_SHARES : opted_in
+  CATCHUP_SHARES ||--o{ INBOX_EVENTS : offers
 
-    courses ||--o{ course_memberships : has
-    courses ||--o{ course_schedules : meets
-    courses ||--o{ lecture_sessions : contains
-
-    lecture_sessions ||--o{ captures : "groups"
-    lecture_sessions ||--o{ session_notebooks : generates
-
-    captures ||--o| capture_analyses : analyzed_by
-
-    session_notebooks ||--o{ catchup_opportunities : "source"
-
-    profiles {
-        uuid id PK
-        text name
-        text year
-        text major
-        timestamptz created_at
-    }
-
-    courses {
-        text id PK
-        text code
-        text name
-        text professor
-        timestamptz created_at
-    }
-
-    course_memberships {
-        uuid id PK
-        uuid user_id FK
-        text course_id FK
-        timestamptz joined_at
-    }
-
-    course_schedules {
-        uuid id PK
-        text course_id FK
-        uuid user_id FK
-        smallint day_of_week
-        time start_time
-        time end_time
-    }
-
-    lecture_sessions {
-        uuid id PK
-        text course_id FK
-        date session_date
-        time start_time
-        time end_time
-        text status
-        timestamptz created_at
-    }
-
-    captures {
-        uuid id PK
-        uuid user_id FK
-        uuid session_id FK
-        text course_id FK
-        text storage_path
-        text mime_type
-        int file_size_bytes
-        smallint sort_order
-        timestamptz captured_at
-        text status
-        timestamptz created_at
-    }
-
-    capture_analyses {
-        uuid id PK
-        uuid capture_id FK
-        text readability
-        float confidence
-        text content_type
-        text extracted_text
-        jsonb unclear_segments
-        text suggested_course_code
-        text title
-        text topic
-        text summary
-        text_arr key_concepts
-        text_arr important_points
-        text_arr assignments
-        text_arr exam_mentions
-        timestamptz analyzed_at
-    }
-
-    session_notebooks {
-        uuid id PK
-        uuid session_id FK
-        uuid user_id FK
-        text title
-        text topic
-        text summary
-        text extracted_text
-        jsonb unclear_segments
-        text_arr key_concepts
-        text_arr important_points
-        text_arr assignments
-        text_arr exam_mentions
-        text source_type
-        uuid source_user_id FK
-        uuid source_notebook_id FK
-        timestamptz created_at
-        timestamptz updated_at
-    }
-
-    friendships {
-        uuid id PK
-        uuid requester_id FK
-        uuid addressee_id FK
-        text status
-        timestamptz created_at
-    }
-
-    catchup_opportunities {
-        uuid id PK
-        uuid session_id FK
-        uuid recipient_id FK
-        uuid source_user_id FK
-        uuid source_notebook_id FK
-        text status
-        timestamptz created_at
-        timestamptz expires_at
-    }
+  PROFILES { uuid id PK }
+  FRIENDSHIPS { uuid id PK }
+  COURSES { text id PK }
+  LECTURES { text id PK }
+  MATERIALS { uuid id PK }
+  COURSE_MEMBERSHIPS { uuid id PK }
+  CAPTURES { uuid id PK }
+  CAPTURE_ANALYSES { uuid id PK }
+  PROCESSING_JOBS { uuid id PK }
+  COURSE_SCHEDULES { uuid id PK "proposed" }
+  INBOX_EVENTS { uuid id PK "proposed" }
+  DEVICE_PUSH_TOKENS { uuid id PK "proposed" }
+  NOTEBOOK_CORRECTIONS { uuid id PK "proposed" }
+  CATCHUP_SHARES { uuid id PK "proposed" }
 ```
 
-### Table Descriptions
+| Entity | Status and purpose | Ownership/RLS | Retention | Milestone |
+|---|---|---|---|---|
+| auth.users | Existing Supabase Auth identity | Managed by Supabase Auth | Follow account deletion policy | Existing/auth |
+| profiles | Existing public profile fields | Authenticated profile reads; owner writes | Retain until account deletion | Existing/auth |
+| friendships | Existing pending/accepted relationships | Only pair can read; requester creates; addressee accepts | Retain until account deletion unless policy changes | Existing/CatchUp prerequisite |
+| courses | Existing course catalog | Existing policies; preserve catalog rows | Retain; never delete to remove enrollment | Existing/enrollment |
+| lectures | Existing notebook records and AI fields | Owner-aware access; verify live policies | Retain text/metadata after photo deletion | Existing/notebook |
+| materials | Existing legacy attachment records | Legacy/demo policies differ from authenticated capture access | Preserve existing legacy rows | Compatibility |
+| course_memberships | Existing per-user enrollment | User-scoped RLS | Retain while enrolled | Existing |
+| captures | Existing page metadata and session grouping; job/lecture links | Owner-scoped RLS; verify live deployment | Keep metadata; never delete failed/unfinished inputs | Existing/retention |
+| capture_analyses | Existing structured per-session analysis | Owner-scoped RLS | Retain text after originals deleted | Existing |
+| processing_jobs | Existing durable job state; **confirmed live, migration history bookkeeping needs repair — see §5** | Owner-scoped RLS; worker needs narrowly scoped privileged access | Retain outcome/audit metadata | Existing; server conversion in progress |
+| Storage objects | Existing private lecture-materials bucket and capture paths | Existing policies; verify authenticated and worker access live | 7 days after successful processing, then scheduled deletion | Retention |
+| Local staged files | App-owned device copies plus local job metadata | Device-local, tied to signed-in owner and job | Keep through 7-day review window; longer for failed/unfinished/review-needed | Capture/retention |
+| course_schedules | Proposed optional schedule signals | User-owned RLS; never expose another user's schedule | Until user removes schedule/course | Schedule |
+| inbox_events | Proposed durable ready/course-needed/final-failure/CatchUp events | Recipient-only reads; server-only creation | Bounded history; set exact duration at implementation | Worker/notifications |
+| device_push_tokens | Proposed per-device token registry | User registers/removes own; server-only delivery access | Remove on logout, invalid token, or unregister | Notifications |
+| notebook_corrections | Proposed student corrections with page references | Notebook owner only | Retain with notebook | Notebook |
+| catchup_shares | Proposed per-notebook owner opt-in and scoped access | Owner controls; recipient accesses only opted-in item | Expire/revoke; recipient copies follow own retention | CatchUp |
+| usage and cleanup metadata | Proposed aggregate cost/deletion metrics | Server-only writes; no photo contents or prompts in telemetry | Bounded operational retention | Cost/retention |
 
-| Table | Purpose | Migration From Current |
+## 5. Migration status (Session A finding)
+
+Full detail lives in `docs/CLASSLENS_MIGRATION_STATUS.md`. Summary for this plan:
+
+- All 15 committed local migrations' schema effects are **live** and match the repo, modulo two
+  cosmetic function-body drifts (`accept_demo_friendship`, `claim_captures_for_analysis` — comments
+  missing from the live body, logic identical).
+- The remote's `supabase_migrations.schema_migrations` bookkeeping table only recognizes **9 of
+  15** as applied. The six unrecorded ones — `20260915030000_demo_profile_access` through
+  `20260921000000_durable_processing_jobs`, including `processing_jobs` itself — are live but
+  untracked.
+- **Blocking risk:** a `db push` today would likely error re-running several of those six
+  (non-idempotent `CREATE TABLE`/`CREATE POLICY` statements). Do not push until this is repaired.
+- **Fix, not yet run:** `supabase migration repair --status applied <version>` for each of the six,
+  then confirm `supabase db diff --linked` comes back clean. This is a remote-state change and
+  needs explicit go-ahead each time it's run, per the deployment-order rule in §8.
+- Unrelated: an uncommitted, in-progress edit to `20260914010000_allow_demo_reads.sql` currently
+  has a typo (`grant selec`) that would break that file if committed as-is. Not fixed as part of
+  reconciliation — flagged for whoever owns that change.
+
+## 6. Operating constraints (confirmed)
+
+- **Supabase tier: Free.** `pg_cron` is enabled by default at this tier, so the recovery/cleanup
+  schedule design in §3 needs no upgrade. Two things to watch, not yet mitigated:
+  - **Free projects pause after 7 days of inactivity.** A `pg_cron` job firing every few minutes
+    should itself count as activity and prevent this — confirm live once the schedule exists;
+    don't assume it.
+  - **500 MB database / 1 GB file storage caps.** The 7-day original-photo retention window (§9,
+    milestone 4) will approach these caps faster than "measure as we go" implies. Do a rough
+    estimate (per-photo size × expected pilot volume × 7 days) before the retention window goes
+    live, not after storage starts erroring.
+- Milestones 3 (server worker) and 6 (schedules/timeline) can run as **parallel, independent
+  tracks** — milestone 6 doesn't touch the worker, processing jobs, or Storage.
+
+## 7. Processing state and safety contract
+
+The database currently has `queued`, `uploading`, `analyzing`, `course_needed`, `filing`,
+`completed`, `retryable_failed`, `terminal_failed`. This plan adds an explicit server-ready
+`uploaded` boundary and a review-needed hold where needed; additions/renames require an additive
+migration and compatibility review.
+
+- **Upload completion:** every expected object exists in the private bucket; every expected
+  capture row is readable and matches owner, job, session, page order, and count; durable job
+  state is marked server-ready. Until then, retain all local originals and allow upload resume.
+  Remove only disposable upload staging copies, and only once confirmed.
+- **Claim and lease:** one atomic server claim per job (§3); lease expiry and runner token on every
+  state-changing operation; renew lease during long work; reject stale-runner writes. A `pg_cron`
+  recovery schedule reclaims ready jobs and expired leases.
+- **Analysis reuse:** validate owner, session, ordered capture IDs, and analysis schema. Reuse a
+  valid saved analysis after retries or lost responses; never issue duplicate paid analysis.
+- **Exactly-once filing:** transactional and idempotent, keyed on owner plus job/session identity.
+  Repeated filing returns the same notebook and never duplicates page links.
+- **Retry and review:** bound automatic retries. Separate retryable errors from terminal failure
+  and review-needed state. Keep originals and metadata for all unresolved states. Student course
+  choice resumes server processing using saved analysis.
+- **Notification:** durable inbox event from server state. Push contains only job ID. On open,
+  fetch authorized current job/event; push permission denial never hides results.
+- **Cleanup eligibility:** only completed, successfully filed jobs become eligible 7 days after
+  completion. Failed, unfinished, course-needed, and review-needed jobs are excluded. A scheduled
+  worker deletes each cloud original idempotently, verifies absence, records attempts/results,
+  retries partial failure. A device cleanup task and foreground/launch sweep remove matching
+  temporary phone copies only after server deletion is confirmed — device cleanup is best-effort
+  while the app isn't running, so the UI must never promise force-quit cleanup timing. Keep
+  notebook text, extraction, correction, page references, analysis, and job audit.
+- **Deletion disclosure:** explain that deleting originals removes image-based reanalysis and
+  visual review. Define user-requested notebook/account deletion and its cascading cleanup
+  separately — never silently delete retained text as part of 7-day image cleanup.
+
+## 8. Deployment order
+
+For milestones requiring backend changes: reconcile migration history (§5) → review and deploy the
+additive migration with RLS → deploy the compatible worker/Edge Function → configure and test the
+recovery schedule → configure push credentials and token registration → enable the 7-day cleanup
+schedule only after successful-file eligibility and deletion verification pass. Test each stage
+against a non-production project/device first. Never apply migrations, deploy, or alter the remote
+project during documentation-only work.
+
+## 9. Implementation milestones and sessions
+
+Dependency order. For each session: automated checks where applicable, live Supabase verification
+where applicable, and physical-iPhone scenarios where applicable. Never report a test or deployment
+complete without recorded evidence. Each session starts with `git status --short`, confirms branch,
+and stops at its own boundary — it does not continue into the next session's work.
+
+| # | Milestone/session | Depends on |
 |---|---|---|
-| `profiles` | User identity (unchanged) | Already exists |
-| `courses` | Course catalog (keep existing, add enrollment) | Already exists — no rename needed |
-| `course_memberships` | User ↔ course enrollment | **New** — enables schedule-based classification |
-| `course_schedules` | When a course meets (per user) | **New** — critical for session grouping |
-| `lecture_sessions` | A physical class meeting event | **New** — groups multiple captures into one session |
-| `captures` | Individual photos with lifecycle status | **Evolves** from existing `materials` table |
-| `capture_analyses` | AI analysis per capture (or per session batch) | **New** — keeps AI output separate from capture metadata |
-| `session_notebooks` | Aggregated study material for user+session | **Evolves** from existing `lectures` table |
-| `friendships` | Social connections (unchanged) | Already exists |
-| `catchup_opportunities` | Missed-class sharing evaluations | **New** — created by scheduled evaluation |
-
-### What Changes From Current Schema
-
-| Current | Evolved | Why |
-|---|---|---|
-| `materials` (upload + attach) | `captures` (lifecycle + session grouping) | Clearer: captures have status, session, user, sort order |
-| `lectures` (= notebook) | `session_notebooks` (study material) + `lecture_sessions` (physical event) | Separate the meeting from the notes — enables CatchUp copies |
-| No schedule awareness | `course_schedules` | Enables auto-suggest on capture |
-| No enrollment | `course_memberships` | Enables "enrolled users" for CatchUp evaluation |
-| No analysis persistence | `capture_analyses` | Keeps faithful extraction separate from organized notes |
-
-### Capture Status Flow
-
-```text
-local ──▶ uploading ──▶ uploaded ──▶ analyzing ──▶ analyzed ──▶ grouped
-  │           │             │            │             │
-  │           ▼             ▼            ▼             ▼
-  └──────── (retry on failure) ◄──── failed
-```
-
-At ≤20 users this is synchronous — the UI drives each transition. No background queue needed.
-
----
-
-## C. Evolved AI Analysis Contract
-
-### Current: `LectureAnalysis`
-
-```ts
-type LectureAnalysis = {
-  suggestedCourse: string | null;
-  title: string;
-  topic: string;
-  summary: string;
-  keyConcepts: string[];
-  importantPoints: string[];
-  assignments: string[];
-  examMentions: string[];
-};
-```
-
-### Evolved: `CaptureAnalysis`
-
-```ts
-type CaptureAnalysis = {
-  // How readable was the source material?
-  readability: 'good' | 'partial' | 'unreadable';
-  confidence: number; // 0.0–1.0
-
-  // What kind of classroom material is this?
-  contentType: 'whiteboard' | 'slide' | 'handwritten' | 'worksheet'
-             | 'diagram' | 'textbook' | 'other';
-
-  // What was ACTUALLY readable — separated from AI interpretation
-  faithfulExtraction: {
-    text: string;
-    unclearSegments: Array<{
-      description: string;
-      reason: string; // "glare", "blurry", "cut off", "handwriting"
-    }>;
-  };
-
-  // Course identification hints (labels, not IDs)
-  courseSignals: {
-    suggestedCode: string | null;  // "CS 3358"
-    suggestedName: string | null;  // "Data Structures"
-    subjectArea: string | null;    // "Computer Science"
-  };
-
-  // AI-organized study material
-  organization: {
-    title: string;
-    topic: string;
-    summary: string;
-    keyConcepts: string[];
-    importantPoints: string[];
-    assignments: string[];
-    examMentions: string[];
-  };
-};
-```
-
-### Why the Evolution Matters
-
-1. **`faithfulExtraction`** — The killer differentiator. Students see what was actually read vs. what AI organized. When the model says "I couldn't read the top-right due to glare," trust is built.
-
-2. **`contentType`** — Whiteboard needs different handling than printed slides. The notebook UI can adapt.
-
-3. **`courseSignals`** — Separate code/name/subjectArea gives the session grouping logic more signal. The model might see "CS 3358" on a slide AND recognize "Data Structures" from the content.
-
-4. **`readability` + `confidence`** — When confidence is low, prompt the student instead of silently producing bad output.
-
-### Multi-Photo Batch Analysis
-
-When a session has multiple photos, they ALL go in one Gemini call. The model sees the full whiteboard sequence and produces ONE `CaptureAnalysis` for the session. This is better than analyzing each photo separately:
-
-```text
-[photo_1] + [photo_2] + [photo_3] + [photo_4]
-                    │
-                    ▼
-            ONE Gemini call
-                    │
-                    ▼
-        ONE CaptureAnalysis for the session
-        (better context = better analysis)
-```
-
----
-
-## D. System Architecture
-
-### Capture + Analysis Pipeline
-
-```text
-┌──────────────────────────────────────────────────────────────┐
-│ MOBILE DEVICE                                                │
-│                                                              │
-│  Camera (instant) ──▶ Local preview strip                    │
-│  [snap] [snap] [snap] [done]                                 │
-│              │                                               │
-│              ▼                                               │
-│     Course suggestion                                        │
-│     (check schedule for current day/time)                    │
-│              │                                               │
-│              ▼                                               │
-│     Sequential upload (foreground)                           │
-│     photo 1/4… 2/4… 3/4… 4/4…                              │
-│              │                                               │
-└──────────────┼───────────────────────────────────────────────┘
-               │
-               ▼
-┌──────────────────────────────────────────────────────────────┐
-│ SUPABASE                                                     │
-│                                                              │
-│  Storage ◄── photo uploads                                   │
-│     │                                                        │
-│     ▼                                                        │
-│  captures table ◄── metadata inserts (status: uploaded)      │
-│     │                                                        │
-│     ▼                                                        │
-│  Edge Function: analyze-captures (NEW)                       │
-│     │                                                        │
-│     ├──▶ Fetch all photos for this session                   │
-│     ├──▶ Send ALL photos in ONE Gemini call                  │
-│     │      • readability assessment                          │
-│     │      • faithful text extraction                        │
-│     │      • content understanding                           │
-│     │      • course/topic signals                            │
-│     │                                                        │
-│     ▼                                                        │
-│  capture_analyses table ◄── analysis result                  │
-│  captures.status = analyzed                                  │
-│     │                                                        │
-│     ▼                                                        │
-│  Session Grouping Logic (in processing screen)               │
-│     • captured_at within schedule window?                    │
-│     • user enrolled in matching course?                      │
-│     • AI courseSignals match?                                │
-│     │                                                        │
-│     ▼                                                        │
-│  lecture_sessions table (create or match)                     │
-│  session_notebooks table (create)                            │
-│     │                                                        │
-│     ▼                                                        │
-│  Navigate to lecture notebook                                │
-│                                                              │
-└──────────────────────────────────────────────────────────────┘
-```
-
-### CatchUp Evaluation Pipeline
-
-```text
-┌────────────────────────────────────────────────┐
-│ SUPABASE pg_cron or Edge Function cron         │
-│ Runs every 15 minutes                          │
-│                                                │
-│ For each lecture_session that ended             │
-│ > 40 minutes ago AND has no opportunity yet:    │
-│                                                │
-│   For each enrolled user in that course:        │
-│     IF captures for this session = 0            │
-│     AND user has accepted friends               │
-│     AND friend is enrolled in same course       │
-│     AND friend has a READY notebook             │
-│     THEN:                                       │
-│       INSERT catchup_opportunity                │
-│       (push notification deferred — in-app     │
-│        badge for now at ≤20 users)             │
-│                                                │
-│ DO NOT TRIGGER IF:                              │
-│   - Recipient has any capture (any status)      │
-│   - No friend has a ready notebook              │
-│   - Opportunity already exists                  │
-│   - Session is older than 48 hours              │
-│                                                │
-└────────────────────────────────────────────────┘
-```
-
-> [!NOTE]
-> At ≤20 users, the CatchUp evaluation can be a simple Edge Function called on a pg_cron schedule OR triggered when a notebook is saved. Push notifications are deferred — use in-app polling/badge on the CatchUp tab. Add Expo push notifications when validated.
-
-### "Add to My Notes" Flow
-
-```text
-Rejan taps "Add to My Notes"
-    │
-    ▼
-Create new session_notebook:
-  - source_type = 'catchup'
-  - source_user_id = Prashant's ID
-  - source_notebook_id = Prashant's notebook ID
-  - COPY all text fields (title, summary, concepts, etc.)
-  - user_id = Rejan's ID
-  - session_id = same session
-    │
-    ▼
-Photo access: read-only through session-scoped RLS
-  - Rejan can VIEW Prashant's captures for this session
-  - No physical copy of photos (save storage)
-  - If Prashant deletes account, Rejan keeps text but loses photos
-    │
-    ▼
-Rejan now has an independent notebook
-  - Can Ask This Lecture on it
-  - Can Generate Quiz on it
-  - Text is independent — Rejan could annotate/edit later
-  - Credits: "via Prashant Bhattarai"
-```
-
----
-
-## E. Proposed Changes — File by File
-
-### New Database Migrations
-
-#### [NEW] Migration: `evolve_schema.sql`
-
-Creates the new tables and evolves existing ones:
-
-```sql
--- 1. Course memberships (who is enrolled where)
-CREATE TABLE course_memberships (
-  id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
-  user_id uuid NOT NULL REFERENCES auth.users(id),
-  course_id text NOT NULL REFERENCES courses(id),
-  joined_at timestamptz DEFAULT now(),
-  UNIQUE (user_id, course_id)
-);
-
--- 2. Course schedules (when does each course meet, per user)
-CREATE TABLE course_schedules (
-  id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
-  course_id text NOT NULL REFERENCES courses(id),
-  user_id uuid NOT NULL REFERENCES auth.users(id),
-  day_of_week smallint NOT NULL CHECK (day_of_week BETWEEN 0 AND 6),
-  start_time time NOT NULL,
-  end_time time NOT NULL,
-  UNIQUE (course_id, user_id, day_of_week)
-);
-
--- 3. Lecture sessions (a physical class meeting)
-CREATE TABLE lecture_sessions (
-  id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
-  course_id text NOT NULL REFERENCES courses(id),
-  session_date date NOT NULL,
-  start_time time,
-  end_time time,
-  status text NOT NULL DEFAULT 'active'
-    CHECK (status IN ('active', 'ready', 'archived')),
-  created_at timestamptz DEFAULT now(),
-  UNIQUE (course_id, session_date)
-);
-
--- 4. Captures (evolves from materials — individual photos with lifecycle)
-CREATE TABLE captures (
-  id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
-  user_id uuid NOT NULL REFERENCES auth.users(id),
-  session_id uuid REFERENCES lecture_sessions(id),
-  course_id text REFERENCES courses(id),
-  storage_path text NOT NULL,
-  mime_type text NOT NULL,
-  file_size_bytes int,
-  sort_order smallint NOT NULL DEFAULT 0,
-  captured_at timestamptz DEFAULT now(),
-  status text NOT NULL DEFAULT 'uploaded'
-    CHECK (status IN ('uploaded', 'analyzing', 'analyzed', 'grouped', 'failed')),
-  created_at timestamptz DEFAULT now()
-);
-
--- 5. Capture analyses (AI output, separate from capture metadata)
-CREATE TABLE capture_analyses (
-  id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
-  session_id uuid REFERENCES lecture_sessions(id),
-  readability text NOT NULL CHECK (readability IN ('good', 'partial', 'unreadable')),
-  confidence real NOT NULL CHECK (confidence BETWEEN 0 AND 1),
-  content_type text,
-  extracted_text text,
-  unclear_segments jsonb DEFAULT '[]',
-  suggested_course_code text,
-  suggested_course_name text,
-  subject_area text,
-  title text NOT NULL,
-  topic text NOT NULL,
-  summary text NOT NULL,
-  key_concepts text[] DEFAULT '{}',
-  important_points text[] DEFAULT '{}',
-  assignments text[] DEFAULT '{}',
-  exam_mentions text[] DEFAULT '{}',
-  analyzed_at timestamptz DEFAULT now()
-);
-
--- 6. Session notebooks (aggregated study material per user per session)
-CREATE TABLE session_notebooks (
-  id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
-  session_id uuid NOT NULL REFERENCES lecture_sessions(id),
-  user_id uuid NOT NULL REFERENCES auth.users(id),
-  title text NOT NULL,
-  topic text,
-  summary text,
-  extracted_text text,
-  unclear_segments jsonb DEFAULT '[]',
-  key_concepts text[] DEFAULT '{}',
-  important_points text[] DEFAULT '{}',
-  assignments text[] DEFAULT '{}',
-  exam_mentions text[] DEFAULT '{}',
-  source_type text NOT NULL DEFAULT 'capture'
-    CHECK (source_type IN ('capture', 'catchup')),
-  source_user_id uuid REFERENCES auth.users(id),
-  source_notebook_id uuid REFERENCES session_notebooks(id),
-  created_at timestamptz DEFAULT now(),
-  updated_at timestamptz DEFAULT now(),
-  UNIQUE (session_id, user_id, source_type)
-);
-
--- 7. CatchUp opportunities
-CREATE TABLE catchup_opportunities (
-  id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
-  session_id uuid NOT NULL REFERENCES lecture_sessions(id),
-  recipient_id uuid NOT NULL REFERENCES auth.users(id),
-  source_user_id uuid NOT NULL REFERENCES auth.users(id),
-  source_notebook_id uuid NOT NULL REFERENCES session_notebooks(id),
-  status text NOT NULL DEFAULT 'pending'
-    CHECK (status IN ('pending', 'viewed', 'added', 'dismissed', 'expired')),
-  created_at timestamptz DEFAULT now(),
-  expires_at timestamptz DEFAULT (now() + interval '7 days'),
-  UNIQUE (session_id, recipient_id, source_user_id)
-);
-
--- RLS on all new tables
-ALTER TABLE course_memberships ENABLE ROW LEVEL SECURITY;
-ALTER TABLE course_schedules ENABLE ROW LEVEL SECURITY;
-ALTER TABLE lecture_sessions ENABLE ROW LEVEL SECURITY;
-ALTER TABLE captures ENABLE ROW LEVEL SECURITY;
-ALTER TABLE capture_analyses ENABLE ROW LEVEL SECURITY;
-ALTER TABLE session_notebooks ENABLE ROW LEVEL SECURITY;
-ALTER TABLE catchup_opportunities ENABLE ROW LEVEL SECURITY;
-
--- Users manage their own enrollments and schedules
-CREATE POLICY "own_memberships" ON course_memberships
-  FOR ALL USING (auth.uid() = user_id);
-CREATE POLICY "own_schedules" ON course_schedules
-  FOR ALL USING (auth.uid() = user_id);
-
--- Users see their own captures + friends' captures through sessions
-CREATE POLICY "own_captures" ON captures
-  FOR ALL USING (auth.uid() = user_id);
-
--- Notebooks: own + catchup-sourced
-CREATE POLICY "own_notebooks" ON session_notebooks
-  FOR ALL USING (auth.uid() = user_id);
-
--- CatchUp: recipient can read, source user's data visible
-CREATE POLICY "own_opportunities" ON catchup_opportunities
-  FOR ALL USING (auth.uid() = recipient_id);
-
--- Sessions: readable by enrolled users
-CREATE POLICY "enrolled_sessions" ON lecture_sessions
-  FOR SELECT USING (
-    EXISTS (
-      SELECT 1 FROM course_memberships
-      WHERE course_memberships.course_id = lecture_sessions.course_id
-      AND course_memberships.user_id = auth.uid()
-    )
-  );
-CREATE POLICY "create_sessions" ON lecture_sessions
-  FOR INSERT WITH CHECK (
-    EXISTS (
-      SELECT 1 FROM course_memberships
-      WHERE course_memberships.course_id = lecture_sessions.course_id
-      AND course_memberships.user_id = auth.uid()
-    )
-  );
-
--- Analyses: readable by session participants
-CREATE POLICY "read_analyses" ON capture_analyses
-  FOR SELECT USING (true);
-CREATE POLICY "insert_analyses" ON capture_analyses
-  FOR INSERT WITH CHECK (true);
-
--- Indexes for the queries we'll run
-CREATE INDEX captures_user_session ON captures(user_id, session_id);
-CREATE INDEX captures_user_date ON captures(user_id, captured_at);
-CREATE INDEX memberships_user ON course_memberships(user_id);
-CREATE INDEX memberships_course ON course_memberships(course_id);
-CREATE INDEX sessions_course_date ON lecture_sessions(course_id, session_date);
-CREATE INDEX notebooks_session_user ON session_notebooks(session_id, user_id);
-CREATE INDEX opportunities_recipient ON catchup_opportunities(recipient_id, status);
-```
-
-> [!IMPORTANT]
-> The existing `materials` and `lectures` tables stay for backward compatibility with the current demo. New captures go through the new `captures` table. The migration is **additive** — nothing breaks.
-
----
-
-### New / Modified Services
-
-#### [NEW] [schedule.ts](file:///Users/admin/Desktop/classLens/src/services/schedule.ts)
-```ts
-getMySchedule(): Promise<CourseSchedule[]>
-setSchedule(courseId: string, slots: ScheduleSlot[]): Promise<void>
-suggestCourseForNow(): Promise<Course | null>
-// Checks current day + time against user's enrolled course schedules
-```
-
-#### [NEW] [enrollment.ts](file:///Users/admin/Desktop/classLens/src/services/enrollment.ts)
-```ts
-getMyEnrollments(): Promise<CourseEnrollment[]>
-enrollInCourse(courseId: string): Promise<void>
-unenrollFromCourse(courseId: string): Promise<void>
-```
-
-#### [NEW] [captures.ts](file:///Users/admin/Desktop/classLens/src/services/captures.ts)
-```ts
-uploadCapture(input: CaptureUploadInput): Promise<Capture>
-uploadCaptures(inputs: CaptureUploadInput[]): Promise<Capture[]>
-getSessionCaptures(sessionId: string): Promise<Capture[]>
-getCaptureUrl(capture: Capture): Promise<string | null>
-```
-
-#### [NEW] [sessions.ts](file:///Users/admin/Desktop/classLens/src/services/sessions.ts)
-```ts
-createSession(courseId: string, date: string): Promise<LectureSession>
-getOrCreateSession(courseId: string, date: string): Promise<LectureSession>
-getCourseSessions(courseId: string): Promise<LectureSession[]>
-```
-
-#### [NEW] [notebooks.ts](file:///Users/admin/Desktop/classLens/src/services/notebooks.ts)
-```ts
-createNotebook(input: CreateNotebookInput): Promise<SessionNotebook>
-getNotebook(sessionId: string): Promise<SessionNotebook | null>
-getUserNotebooks(courseId?: string): Promise<SessionNotebook[]>
-```
-
-#### [NEW] [catchup.ts](file:///Users/admin/Desktop/classLens/src/services/catchup.ts)
-```ts
-getMyOpportunities(): Promise<CatchUpOpportunity[]>
-viewOpportunity(id: string): Promise<void>
-addToMyNotes(opportunityId: string): Promise<SessionNotebook>
-dismissOpportunity(id: string): Promise<void>
-```
-
-#### [MODIFY] [ai.ts](file:///Users/admin/Desktop/classLens/src/services/ai.ts)
-```ts
-// NEW: batch analysis for multi-photo sessions
-analyzeCaptures(captures: Capture[]): Promise<CaptureAnalysis>
-// KEEP: existing single-material analysis for backward compat
-analyzeMaterial(material: Material): Promise<LectureAnalysis>
-// KEEP: Ask + Quiz reconnected to session notebooks
-askNotebook(notebookId: string, question: string): Promise<AskLectureResult>
-generateNotebookQuiz(notebookId: string): Promise<GenerateQuizResult>
-```
-
----
-
-### New / Modified Edge Functions
-
-#### [NEW] `analyze-captures` Edge Function
-- Accepts `{ captureIds: string[] }` (array of capture UUIDs)
-- Fetches ALL photos for those captures from Storage
-- Sends them ALL in one Gemini multimodal call
-- Returns full `CaptureAnalysis` with faithful extraction + organization
-- Uses existing `_shared/ai.ts` utilities (`loadPhoto`, `base64`, `requestGemini`)
-
-#### [NEW] `evaluate-catchup` Edge Function
-- Called by pg_cron every 15 minutes (or manually for testing)
-- Queries sessions ended > 40 min ago with no existing opportunity
-- For each: checks enrollment, captures, friendships, notebooks
-- Creates `catchup_opportunity` rows
-
-#### [KEEP] `analyze-material` — backward compatibility for existing demo
-#### [KEEP] `ask-lecture` — reconnect to session notebooks
-#### [KEEP] `generate-quiz` — reconnect to session notebooks
-
----
-
-### New / Modified Screens
-
-#### [MODIFY] [capture.tsx](file:///Users/admin/Desktop/classLens/src/app/capture.tsx)
-**Major evolution:**
-- Camera opens immediately — no intro card on first load
-- Multi-photo session: bottom thumbnail strip shows captured photos
-- "+" button to add more (up to 6)
-- After capture: calls `suggestCourseForNow()` to pre-fill course
-- "Done" → passes all photo URIs to processing
-
-#### [MODIFY] [processing.tsx](file:///Users/admin/Desktop/classLens/src/app/processing.tsx)
-**Major evolution:**
-- Uploads all photos sequentially with progress
-- Calls `analyze-captures` with all capture IDs (ONE Gemini call)
-- Uses `CaptureAnalysis.courseSignals` + schedule match for course suggestion
-- Creates `lecture_session` + `session_notebook` instead of old `lecture`
-- Attaches all captures to the session
-- Navigates to evolved notebook view
-
-#### [NEW] Schedule setup screen
-- Accessible from courses or profile
-- For each enrolled course: pick days + start/end time
-- Simple time picker UI
-
-#### [NEW] Enrollment screen (or integrate into courses)
-- "Join" button on course cards
-- Enrolled courses show schedule badge
-
-#### [MODIFY] Lecture/notebook detail screen
-- **3-layer display:** Original Material → Faithful Extraction → AI Study Notes
-- Scrollable photo gallery for originals
-- Faithful extraction card with "unreadable" callouts
-- AI study notes with existing summary/concepts/points layout
-- Ask + Quiz buttons wired to notebook
-
-#### [MODIFY] [catchup.tsx](file:///Users/admin/Desktop/classLens/src/app/catchup.tsx)
-- Replace hardcoded demo with real `catchup_opportunities` query
-- Show pending opportunities with friend name, course, capture count
-- "View" → read-only notebook with friend's captures
-- "Add to My Notes" → creates own notebook copy
-
-#### [MODIFY] Course detail screen
-- Show semester timeline of sessions instead of flat lecture list
-- Each session card: date, capture count, status, topic
-
----
-
-### New Types
-
-#### [NEW] [types/captures.ts](file:///Users/admin/Desktop/classLens/src/types/captures.ts)
-```ts
-export type Capture = {
-  id: string;
-  userId: string;
-  sessionId: string | null;
-  courseId: string | null;
-  storagePath: string;
-  mimeType: string;
-  fileSizeBytes: number | null;
-  sortOrder: number;
-  capturedAt: string;
-  status: 'uploaded' | 'analyzing' | 'analyzed' | 'grouped' | 'failed';
-};
-
-export type CaptureUploadInput = {
-  uri: string;
-  mimeType: string;
-  fileName: string;
-};
-```
-
-#### [NEW] [types/analysis.ts](file:///Users/admin/Desktop/classLens/src/types/analysis.ts)
-```ts
-export type CaptureAnalysis = {
-  readability: 'good' | 'partial' | 'unreadable';
-  confidence: number;
-  contentType: string;
-  faithfulExtraction: {
-    text: string;
-    unclearSegments: Array<{ description: string; reason: string }>;
-  };
-  courseSignals: {
-    suggestedCode: string | null;
-    suggestedName: string | null;
-    subjectArea: string | null;
-  };
-  organization: {
-    title: string;
-    topic: string;
-    summary: string;
-    keyConcepts: string[];
-    importantPoints: string[];
-    assignments: string[];
-    examMentions: string[];
-  };
-};
-```
-
-#### [NEW] [types/sessions.ts](file:///Users/admin/Desktop/classLens/src/types/sessions.ts)
-```ts
-export type LectureSession = {
-  id: string;
-  courseId: string;
-  sessionDate: string;
-  startTime: string | null;
-  endTime: string | null;
-  status: 'active' | 'ready' | 'archived';
-};
-
-export type SessionNotebook = {
-  id: string;
-  sessionId: string;
-  userId: string;
-  title: string;
-  topic: string | null;
-  summary: string | null;
-  extractedText: string | null;
-  unclearSegments: Array<{ description: string; reason: string }>;
-  keyConcepts: string[];
-  importantPoints: string[];
-  assignments: string[];
-  examMentions: string[];
-  sourceType: 'capture' | 'catchup';
-  sourceUserId: string | null;
-  sourceNotebookId: string | null;
-};
-
-export type CatchUpOpportunity = {
-  id: string;
-  sessionId: string;
-  recipientId: string;
-  sourceUserId: string;
-  sourceNotebookId: string;
-  status: 'pending' | 'viewed' | 'added' | 'dismissed' | 'expired';
-  expiresAt: string;
-};
-```
-
-#### [NEW] [types/schedule.ts](file:///Users/admin/Desktop/classLens/src/types/schedule.ts)
-```ts
-export type CourseSchedule = {
-  id: string;
-  courseId: string;
-  dayOfWeek: number;
-  startTime: string;
-  endTime: string;
-};
-
-export type CourseEnrollment = {
-  id: string;
-  courseId: string;
-  joinedAt: string;
-};
-```
-
----
-
-## F. Session Grouping Logic
-
-The heart of the product. When a student finishes capturing, the system determines which session this belongs to:
-
-```text
-INPUTS:
-  - captured_at timestamp
-  - courseSignals from CaptureAnalysis
-  - user's enrolled courses + schedules
-  - existing lecture_sessions
-
-LOGIC:
-  1. Check schedule match (heaviest weight):
-     Is captured_at within a known class window?
-     (±15 min buffer for before/after class captures)
-     → course_id candidate + confidence score
-
-  2. Check enrollment filter:
-     Is user enrolled in the candidate course?
-     → binary filter
-
-  3. Check AI content signals:
-     Does courseSignals.suggestedCode match an enrolled course?
-     → confidence boost if matches schedule candidate
-
-  4. Check existing sessions:
-     Does a lecture_session already exist for this course + today?
-     → if yes, join it (add captures to existing session)
-
-OUTCOMES:
-  A. High confidence (schedule + enrollment + AI agree)
-     → Auto-assign. Show "Looks like CS 3358" with change option.
-
-  B. Medium confidence (schedule matches but AI is unsure)
-     → Show suggestion with "Is this right?" prompt.
-
-  C. Low confidence (no schedule match, or ambiguous)
-     → Show course picker. Let student choose.
-
-  D. No courses enrolled
-     → Show course creation form (existing flow).
-```
-
-At ≤20 users, this logic runs synchronously in the processing screen, not in a background job.
-
----
-
-## G. Privacy and Sharing Model
-
-```text
-┌─────────────────────────────────────────────────────┐
-│ CatchUp Sharing requires ALL of:                     │
-│                                                     │
-│ 1. Accepted friendship (mutual)                     │
-│ 2. Both enrolled in the same course                 │
-│ 3. Specific lecture_session context                  │
-│ 4. Valid catchup_opportunity (not expired/dismissed) │
-│ 5. Recipient explicitly chose "Add to My Notes"     │
-│                                                     │
-│ Friendship does NOT grant:                           │
-│ - Browse all friend's courses                       │
-│ - Browse all friend's captures                      │
-│ - Access to non-shared sessions                     │
-│ - Historical access to old sessions                 │
-│                                                     │
-│ SHARING IS OPT-OUT, NOT OPT-IN:                     │
-│ - Captures shared through CatchUp by default        │
-│   within accepted friendships + shared enrollment   │
-│ - Users can disable CatchUp per course (future)     │
-│                                                     │
-│ EXPIRATION:                                         │
-│ - Opportunities expire after 7 days                 │
-│ - Unfriending revokes all CatchUp access            │
-│ - Existing notebook copies (text) remain            │
-└─────────────────────────────────────────────────────┘
-```
-
----
-
-## H. Implementation Milestones
-
-> [!IMPORTANT]
-> Build in order. Each milestone is usable before starting the next.
-
-### Milestone 1: Auth Hardening + Data Model + Core Services (Week 1-2)
-
-**Do the auth prerequisites first — before any real user signs up.**
-
-#### Auth & Email Verification (do this before anything else)
-
-- [ ] **Supabase Dashboard → Auth → Settings: restrict signups to `txstate.edu`**
-  - Only real Texas State students can create accounts
-  - Prevents random fake-email signups entirely
-  - Takes 2 minutes in the dashboard, zero code changes
-- [ ] **Keep email confirmation ON** (it is already on — do not disable it)
-  - Proves the user owns a real `@txstate.edu` inbox
-  - Required for a trusted small network where people connect with classmates they know
-- [ ] **Fix [`auth.ts`](file:///Users/admin/Desktop/classLens/src/services/auth.ts) `signUp()` — remove the hackathon-era error (line 78–80):**
-  ```ts
-  // Remove this throw — it was written for the demo where email confirm was off:
-  // if (!data.session) { throw new Error('Account created, but email confirmation is on...') }
-
-  // Replace with: treat no-session as success, let UI show the check-email state
-  if (!data.session) return; // email confirmation pending — expected and correct
-  ```
-- [ ] **Add "Check your email" state to [`signup.tsx`](file:///Users/admin/Desktop/classLens/src/app/signup.tsx):**
-  - After `signUp()` returns without error, show:
-    > "We sent a confirmation link to your TXST email. Click it to activate your account, then come back and sign in."
-  - Simple screen — no navigation, just a message + "Go to sign in" button
-  - No new libraries needed
-- [ ] **Add keep-alive `pg_cron` job** (prevents free tier pause during breaks):
-  ```sql
-  SELECT cron.schedule(
-    'keep-alive',
-    '0 12 */5 * *',  -- noon every 5 days
-    $$SELECT 1$$
-  );
-  ```
-  Run this once in the Supabase SQL editor. Done.
-
-#### Data Model
-
-- [ ] Write and apply the `evolve_schema.sql` migration (all new tables)
-- [ ] Create `captures.ts` service (upload, read, signed URLs)
-- [ ] Create `sessions.ts` service (create/get sessions)
-- [ ] Create `notebooks.ts` service (create/get notebooks)
-- [ ] Create `enrollment.ts` service (join/leave courses)
-- [ ] Update type exports in `src/types/index.ts`
-- [ ] Verify: `npx tsc --noEmit` passes, migration applies cleanly
-
-> [!NOTE]
-> **Friend search already works.** `searchProfiles(query)` searches by name, excludes your own profile, and never exposes emails. `sendFriendRequest` / `acceptFriendRequest` are fully implemented. The social layer needs no code changes — only the auth gating above.
-
-### Milestone 2: Rapid Camera + Quality Detection (Week 2-3)
-
-The camera experience that makes ClassLens feel different from "upload a photo":
-
-- [ ] Rebuild `capture.tsx` as a **camera-first** screen:
-  - Camera viewfinder fills screen immediately on open
-  - Shutter button returns instantly (<50ms perceived) — save to local FS, don't block
-  - Camera stays live between shots — never closes/reopens
-  - Bottom thumbnail strip shows captured photos
-- [ ] **On-device blur detection** (post-capture, no cloud):
-  - After each capture, run Laplacian variance on a downscaled version
-  - Threshold: if variance < cutoff → "blurry"
-  - Technology: `expo-image-manipulator` to resize → compute on pixel data
-  - Runs async — never blocks the shutter or freezes the camera
-- [ ] **On-device exposure check:**
-  - Histogram analysis on the downscaled image
-  - Flag if > 80% of pixels are in the bottom 10% (too dark) or top 10% (too bright)
-- [ ] **Retake / Keep Anyway overlay:**
-  - When quality check fails, show inline overlay on the thumbnail (not a modal)
-  - Two buttons: "Retake" (discards, shutter ready) and "Keep Anyway" (adds with ⚠️ badge)
-  - Auto-dismiss after 3 seconds → defaults to Keep Anyway
-  - Camera stays live underneath — never interrupted
-- [ ] **Session photo management:**
-  - Tap thumbnail to preview full-size
-  - Swipe or X to remove a photo from the session
-  - "+" button to add more (up to 6)
-  - Photos flagged with ⚠️ can be retaken from the review screen
-- [ ] Session review screen before processing (with course suggestion)
-- [ ] Verify: can rapid-fire 4 photos → see quality feedback → continue to processing
-
-### Milestone 3: Evolved Analysis Pipeline (Week 3-4)
-
-- [ ] Create `analyze-captures` Edge Function (multi-photo → one `CaptureAnalysis`)
-- [ ] Full `CaptureAnalysis` contract with faithful extraction + course signals
-- [ ] Update `ai.ts` with `analyzeCaptures()` service
-- [ ] Create `src/lib/captureAnalysis.ts` parser (validates server + mobile)
-- [ ] Verify: 4 photos → one analysis with extraction + organization
-
-### Milestone 4: Session Grouping + Course Schedule (Week 4-5)
-
-- [ ] Create `schedule.ts` service
-- [ ] Build schedule setup UI (integrated into course detail)
-- [ ] Build enrollment UI ("Join" button on courses)
-- [ ] Implement `suggestCourseForNow()` — time + schedule matching
-- [ ] Integrate into `processing.tsx`: auto-suggest course, create session, create notebook
-- [ ] Verify: capture during CS 3358 window → auto-suggests CS 3358
-
-### Milestone 5: Background Processing Resilience (Week 5)
-
-What happens when the student closes the app during upload/analysis:
-
-- [ ] **Capture status persistence** — each capture has a status in the database:
-  - `uploaded` → safe in Supabase Storage + captures table
-  - `analyzing` → analysis in progress
-  - `analyzed` → analysis saved to capture_analyses
-  - `grouped` → assigned to a session + notebook created
-- [ ] **Resume-on-open logic:**
-  - On app open, check for captures in intermediate states (uploaded but not analyzed, analyzed but not grouped)
-  - Show a "You have an unfinished session" banner on Home
-  - Tapping it reopens processing from where it stopped
-  - No duplicate uploads, no duplicate Gemini calls (check status first)
-- [ ] **expo-background-fetch registration:**
-  - Register a background task that checks for `uploaded` captures
-  - If found, trigger the analysis Edge Function
-  - iOS gives ~30s of background execution — enough to start the analysis
-  - The Edge Function runs server-side regardless of app state
-- [ ] **Resilient processing flow:**
-  - Upload each photo immediately as it's captured (not all at "Done")
-  - Each upload is independent — if the app closes after photo 3/4, three photos are safe
-  - When processing resumes, it skips already-uploaded photos
-  - Analysis results are persisted server-side in capture_analyses — survives app close
-- [ ] Verify: capture 4 photos → force-close app after upload → reopen → session resumes
-
-### Milestone 6: Semester Notebook View (Week 5-6)
-
-- [ ] Rebuild course detail: semester timeline of sessions
-- [ ] Rebuild notebook detail: 3-layer view (originals → extraction → AI notes)
-- [ ] Photo gallery for original captures in notebook
-- [ ] Faithful extraction display with unclear-segment callouts
-- [ ] AI study notes section with existing layout
-- [ ] Verify: can navigate Home → CS 3358 → Sept 15 session → full notebook
-
-### Milestone 7: Study Tools Reconnection (Week 6)
-
-- [ ] Port Ask This Lecture to work with `session_notebooks` + `captures`
-- [ ] Port Generate Quiz to work with `session_notebooks` + `captures`
-- [ ] These already work — reconnect to new data model + multi-photo context
-- [ ] Verify: Ask and Quiz produce answers grounded in all session photos
-
-### Milestone 8: Automatic CatchUp + Notifications (Week 7-8)
-
-The complete automatic missed-class experience:
-
-- [ ] **`evaluate-catchup` Edge Function:**
-  - Queries `lecture_sessions` that ended > 40 min ago
-  - For each: find enrolled users with ZERO captures for that session
-  - Check if they have accepted friends who DO have a ready notebook
-  - Create `catchup_opportunity` row if all conditions met
-  - Prevent duplicates (UNIQUE constraint on session + recipient + source)
-- [ ] **pg_cron schedule:**
-  - Run `evaluate-catchup` every 15 minutes
-  - Configured in Supabase dashboard (Database → Extensions → pg_cron)
-  - `SELECT cron.schedule('evaluate-catchup', '*/15 * * * *', $$SELECT ...$$);`
-- [ ] **Expo push notifications:**
-  - Install `expo-notifications`
-  - Register device push token on login, store in `profiles.push_token`
-  - `evaluate-catchup` sends push notification via Expo Push API:
-    "CS 3358 notes available from today's lecture. Prashant captured 4 pages."
-  - Tapping notification opens CatchUp tab
-- [ ] **CatchUp tab badge:**
-  - Poll for pending opportunities count on app open / tab switch
-  - Show numeric badge on CatchUp tab icon
-- [ ] Create `catchup.ts` service (getMyOpportunities, addToMyNotes, dismiss)
-- [ ] Rebuild `catchup.tsx`: real opportunities, not hardcoded demo
-- [ ] Implement "Add to My Notes" (creates independent notebook copy)
-- [ ] Read-only view of friend's captures through session-scoped RLS
-- [ ] Verify: Prashant captures → 40 min later → Rejan gets notification → opens CatchUp → adds to notes → has own notebook
-
----
-
-## I. Backward Compatibility
-
-The existing demo flow (materials → lectures → catchup with hardcoded data) stays working throughout:
-
-- Existing `materials` and `lectures` tables remain — no DROP
-- Existing Edge Functions (`analyze-material`, `ask-lecture`, `generate-quiz`) keep working
-- Old screens continue to function until replaced milestone by milestone
-- Demo data (Prashant's assembly lecture) survives the migration
-
-New captures go through the new pipeline; old data stays in old tables.
-
----
-
-## J. Open Questions
-
-> [!IMPORTANT]
-> **Branch strategy:** This spans frontend and backend. On `integration` branch currently. Should we continue on `integration`, or create a dedicated `evolution` branch? The work is incremental and each milestone merges cleanly.
-
-> [!IMPORTANT]
-> **Schedule setup friction:** Before any auto-suggestion value, a student must: sign up → create profile → add course → enroll → add schedule. That's a lot of setup. Should M4 include a "schedule-free" mode where the system just pre-selects the most recently used course? (Recommended: yes, schedule matching is a bonus, not a requirement.)
-
-> [!IMPORTANT]
-> **Existing `lectures` table:** Should M5 include a one-time migration that converts existing `lectures` rows into `session_notebooks` + `lecture_sessions`? Or keep both systems running side by side? (Recommended: side by side initially, migrate later when the new flow is proven.)
-
-> [!WARNING]
-> **Edge Function timeout:** Multi-photo analysis (4-6 photos in one Gemini call) will take longer than single-photo. Supabase Edge Functions have a 150s timeout on paid plans. At 2MB/photo × 6 = 12MB → should be fine within limits. Will verify in M3.
-
----
-
-## K. Verification Plan
-
-### Per Milestone
-- `npx tsc --noEmit` — type-check passes
-- `npx expo export` — build succeeds
-- Manual test on device for the milestone's feature
-
-### End-to-End (after all milestones)
-1. Sign up → create profile → create course → set schedule → enroll
-2. Open camera → snap 4 photos → auto-suggests correct course
-3. Processing: uploads 4/4 → analyzes → creates session + notebook
-4. View notebook: see original photos, faithful extraction, AI notes
-5. Ask This Lecture → grounded answer from all 4 photos
-6. Generate Quiz → quiz based on all session content
-7. Friend misses class → CatchUp opportunity appears → adds to notes
-8. Friend's notebook copy is independent, can Ask/Quiz on it
-
-### What Stays Working
-- Existing single-photo capture flow
-- Existing hardcoded CatchUp demo (until M7 replaces it)
-- Existing course/lecture browsing
-- Existing quiz/ask features on old lectures
+| 1 | Auth, baseline, compatibility | — |
+| 2 | Rapid capture, quality feedback, staging, upload boundary | 1 |
+| **A** | **Migration reconciliation — done, see §5** | 2 |
+| B | Claim/lease schema (additive migration + RLS; repair migration history first — see §5) | A |
+| C | Worker takes over analysis/matching/filing behind a flag; phone orchestrator stays as fallback | B |
+| D | Recovery schedule live (`pg_cron`); phone orchestrator removed; force-quit-after-upload verified | C |
+| E | Notebook schema, corrections, cleanup-eligibility columns | D |
+| F | Scheduled original-photo cleanup, phone-side sweep | E |
+| G | Home recovery UI, inbox events | D |
+| H | Push notifications, device token lifecycle | G |
+| I | Schedules + semester timeline — **independent track, runs in parallel with B–H** | 1 |
+| J | Grounded Ask | E |
+| K | Quizzes, missed-question review | J |
+| — | **Pilot checkpoint: 4–5 students run capture → notebook → Ask/Quiz** | 1–K, I |
+| L | PDF import (limits from pilot data) | pilot |
+| M | Audio recording/import | pilot |
+| N | Video import | pilot |
+| O | Owner-opt-in CatchUp | pilot |
+| P | Release, cost, and privacy readiness | ongoing from D; final pass after L–O |
+
+### Session B — Claim/lease schema
+
+- Run `supabase migration repair` for the six unrecognized migrations (bookkeeping only — confirm
+  with the project owner before running against remote); confirm `db diff --linked` is clean.
+- Additive migration: lease columns on `processing_jobs` (`worker_run_id`, `lease_expires_at`,
+  `claimed_at`, `uploaded` status value); RLS confirming owner-only phone access.
+- Atomic claim as one SQL statement/function (§3); local test proving concurrent claims can't
+  double-claim.
+- Do not wire into the real flow yet — phone orchestrator keeps running unchanged.
+- **Exit:** migration reviewed and deploy-ready (deploy only if explicitly authorized this
+  session); claim-race test passing locally.
+
+### Session C — Worker behind a flag
+
+- Move analysis → course-matching → filing into an Edge Function: atomic claim → reuse-or-run
+  analysis → match → idempotent filing → status update, scoped by `owner_id`/`job_id`.
+- Gate behind a flag; phone orchestrator stays default until verified.
+- Add lease renewal if a real Gemini-call timing measurement shows risk of exceeding Edge Function
+  limits.
+- **Exit, physical iPhone:** with the flag on, upload → force-quit → worker completes with no
+  further phone involvement; evidence recorded.
+
+### Session D — Recovery schedule, orchestrator removal
+
+- `pg_cron` + `pg_net` job invoking the worker Edge Function on interval; reclaims ready jobs and
+  expired leases.
+- Remove the phone-side orchestrator once the flag-on path is proven.
+- **Exit, physical iPhone:** force-quit immediately after Uploaded, don't reopen the app, confirm
+  the notebook files anyway — the plan's previously-unverified case.
+
+### Session E — Notebook schema, corrections, cleanup eligibility
+
+- `notebook_corrections` (additive migration, owner-only RLS); cleanup-eligibility columns on
+  `processing_jobs`/notebook records (`completed_at`, `cleanup_eligible_at`, `cleanup_attempted_at`,
+  `cleanup_completed_at`, `last_cleanup_error`).
+- Correction editor UI, page-reference citations resolved from stored text.
+- **Exit:** a correction persists across restart with a visible page reference; no cleanup logic
+  runs yet.
+
+### Session F — Scheduled cleanup
+
+- `pg_cron` cleanup job: select eligible jobs (completed/filed only, excludes
+  failed/course_needed/review-needed), delete Storage objects, verify absence, mark
+  complete/record error for retry.
+- Phone-side foreground/launch sweep removes local originals only after server confirmation.
+- **Exit, physical iPhone:** force eligibility via controlled timestamp, confirm cloud original
+  gone, notebook text remains, local copy clears only after server confirmation (test foregrounded
+  and after cold relaunch).
+
+### Session G — Home recovery, inbox
+
+- Replace low-contrast repeated completion cards with a compact inbox: one durable `inbox_events`
+  row per state transition, server-created only.
+- Home reads inbox + current job state, renders recovery action per unresolved item.
+- **Exit, physical iPhone:** trigger each event type, confirm one card per transition, readable
+  contrast, working recovery action.
+
+### Session H — Push
+
+- `device_push_tokens`; register on grant, remove on logout/invalid token.
+- Push payload carries only job ID.
+- **Exit, physical iPhone:** allow/deny permission; open an event from foreground, background,
+  terminated; Home recovery still works with permission denied.
+
+### Session I — Schedules and semester timeline (parallel track)
+
+- `course_schedules` (user-owned RLS); optional schedule setup UI; matcher treats schedule as a
+  signal, never a filter that could select an unenrolled course.
+- Semester timeline orders lectures by date without touching the global catalog.
+- **Exit:** two accounts with conflicting/no schedules both match correctly; enrollment changes
+  never delete catalog rows.
+
+### Session J — Grounded Ask
+
+- Ask answers generated only from stored notebook text (post-cleanup safe), resolved page
+  citations, explicit uncertainty when evidence is missing.
+- **Exit, physical iPhone:** ask about a cited passage (correct citation) and an absent fact
+  (explicit uncertainty, not a fabricated answer).
+
+### Session K — Quizzes, missed-question review
+
+- Quiz generation grounded in saved notebook content only; persist missed questions with source
+  citation.
+- **Exit:** generate a quiz, answer one incorrectly, confirm it's reviewable later with source
+  reference intact.
+
+### Pilot checkpoint
+
+Run the 4–5 student pilot on milestones 1–K + I before starting L–O. Use it to collect real
+per-photo-size, storage-growth, and AI-usage numbers (§6) — those numbers drive the size/duration
+limits in L–N, not the other way around.
+
+### Session L — PDF import
+
+- Limits from pilot-measured data; page-level citations; corrupt-file/oversize handling with clear
+  errors.
+
+### Session M — Audio recording/import
+
+- Duration/byte limits from pilot data; timestamped transcript; citations resolve to timestamps.
+
+### Session N — Video import
+
+- Duration/byte/frame-count limits; audio transcript plus documented, capped frame-selection
+  policy; citations resolve to frame/time.
+
+### Session O — Owner-opt-in CatchUp
+
+- `catchup_shares` (owner opt-in, default off, per-notebook, expiring/revocable); read-only scoped
+  recipient preview; "Add to My Notes" creates an independently owned copy, not a live link.
+- **Exit, two accounts:** confirm no access without opt-in (friendship/shared enrollment alone is
+  never enough), then opt-in → preview → copy → revoke and confirm source is blocked afterward.
+
+### Session P — Release, cost, privacy readiness
+
+- Final pass: onboarding/auth polish, contrast/accessibility, loading/empty/error states,
+  privacy/deletion disclosure text, and — using real pilot numbers — a documented decision on
+  whether free tier holds for a full semester or the project needs to upgrade or shorten retention.
+
+## 10. Cost, limits, and operational decisions
+
+Measure before setting final per-format limits: median and high-percentile file sizes from real
+captures; compressed-copy size and legibility; storage growth at 7-day retention; number/duration
+of model calls; input/output token or equivalent provider usage; bandwidth; retry rate; cleanup
+success. Keep operational metrics free of photo contents and unnecessary prompts. Set alert/review
+thresholds based on measured usage and the free-tier caps in §6. If projected semester usage
+exceeds available storage or provider limits, shorten original retention with clear disclosure,
+reduce supported input sizes, or upgrade — never claim guaranteed $0 pricing.
+
+Set separate limits for photo count/bytes, PDF bytes/pages, audio duration/bytes, and video
+duration/bytes/frame count. Each modality session (L–N) documents these values, its model/bandwidth
+budget, temporary-file handling, and deletion behavior before implementation.
+
+## 11. Working rules
+
+1. Start each session in the real repo with `git status --short`; never overwrite, stash, or stage
+   anyone's work without saying so. Confirm current branch and only touch files relevant to that
+   session's milestone.
+2. Mark work **verified implemented**, **reported but not independently verified**, or **planned**
+   — don't blur these. Quote exact schema/function names only after reading them live.
+3. Don't start a whole-repository audit every session. Don't invent tests, live migrations, push
+   credentials, or native build results. Keep changes scoped to the session's boundary. Ask before
+   deployment, remote SQL, commit, or push unless the current request explicitly authorizes it.
+4. If this plan and the repo disagree, the repo wins — update this file to match, don't force the
+   repo to match a stale plan.
