@@ -93,7 +93,7 @@ export async function getRecentProcessingJobs(limit = 8): Promise<ProcessingJob[
 export async function getRunnableProcessingJobs(limit = 3): Promise<ProcessingJob[]> {
   const supabase = await client();
   const { data, error } = await supabase.from('processing_jobs').select(processingJobColumns)
-    .in('stage', ['queued', 'uploading', 'analyzing', 'filing'])
+    .in('stage', ['queued', 'uploading'])
     .order('created_at').limit(limit).returns<JobRow[]>();
   if (error) throw new Error(`Could not load unfinished processing jobs: ${error.message}`);
   return data.map(fromRow);

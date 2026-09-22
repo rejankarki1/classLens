@@ -5,6 +5,7 @@ export type ProcessingMediaType = 'photo' | 'audio' | 'video';
 export type ProcessingJobStage =
   | 'queued'
   | 'uploading'
+  | 'uploaded'
   | 'analyzing'
   | 'course_needed'
   | 'filing'

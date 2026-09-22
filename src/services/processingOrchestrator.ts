@@ -1,17 +1,11 @@
 import { randomUUID } from 'expo-crypto';
 
-import { parseCaptureAnalysis } from '@/lib/captureAnalysis';
-import { matchEnrolledCourse } from '@/features/processing/courseMatcher';
 import { MAX_PROCESSING_FAILURES } from '@/features/processing/stateMachine';
 import type { ProcessingJob, ProcessingTrigger, ResumableProcessingStage } from '@/types';
-import { analyzeCaptures } from './ai';
-import { getMyEnrolledCourses } from './enrollment';
 import { uploadCapture } from './materials';
 import { getStagedCaptureSession, removeStagedPhoto } from './processingLocal';
 import {
   claimProcessingJob,
-  fileProcessingJob,
-  getCaptureAnalysisRecord,
   getJobCaptureIds,
   getProcessingJob,
   getRunnableProcessingJobs,
@@ -20,12 +14,29 @@ import {
 } from './processingJobs';
 import { notifyProcessingJob } from './processingNotifications';
 
+// Post-upload work (analysis, course matching, filing) is owned entirely by
+// the process-job worker Edge Function -- proven end-to-end on a physical
+// device (force-quit immediately after reaching 'uploaded', worker completed
+// filing with zero further phone involvement; see docs/CLASSLENS_IMPLEMENTATION_PLAN.md
+// Session C/D exit conditions). The phone's job stops at the upload boundary:
+// stage the job as 'uploaded' and nudge the worker.
+async function triggerWorker(): Promise<void> {
+  try {
+    const { supabase } = await import('@/lib/supabase');
+    await supabase.functions.invoke('process-job', { method: 'POST' });
+  } catch {
+    // Best-effort nudge only. A force-quit right after this call does not
+    // cancel the in-flight request server-side; Session D's pg_cron sweep is
+    // the correctness backstop if this never reaches the server at all.
+  }
+}
+
 type Failure = { code: string; message: string; retryable: boolean };
 
 function safeFailure(error: unknown): Failure {
   const raw = error instanceof Error ? error.message : '';
   const upper = raw.toUpperCase();
-  if (upper.includes('UNSUPPORTED') || upper.includes('NO LONGER AVAILABLE') || upper.includes('BLOCKED') || upper.includes('OWNERSHIP') || upper.includes('INVALID')) {
+  if (upper.includes('UNSUPPORTED') || upper.includes('BLOCKED') || upper.includes('OWNERSHIP') || upper.includes('INVALID')) {
     return { code: 'PROCESSING_TERMINAL', message: 'This lecture cannot be processed automatically.', retryable: false };
   }
   if (upper.includes('SIGNED OUT') || upper.includes('SIGN IN')) {
@@ -92,41 +103,11 @@ export async function runProcessingJob(jobId: string, _trigger: ProcessingTrigge
         removeStagedPhoto(job.id, job.ownerId, photo.id);
       }
       if (uploadedCount !== job.totalCount) throw new Error('Not every lecture page was uploaded.');
-      job = await updateProcessingJob(job.id, token, { stage: 'analyzing', uploaded_count: uploadedCount });
-    }
-
-    if (job.stage === 'analyzing') {
-      const captureIds = await getJobCaptureIds(job.id);
-      let record = await getCaptureAnalysisRecord(job.captureSessionId);
-      if (!record) {
-        await analyzeCaptures(job.captureSessionId, captureIds);
-        record = await getCaptureAnalysisRecord(job.captureSessionId);
-      }
-      if (!record) throw new Error('Saved analysis could not be verified.');
-      const analysis = parseCaptureAnalysis(record.analysis, captureIds);
-      const match = matchEnrolledCourse(analysis, await getMyEnrolledCourses());
-      const common = {
-        capture_analysis_id: record.id,
-        suggested_course_id: match.course?.id ?? null,
-        suggested_course_label: match.course ? `${match.course.code} · ${match.course.name}` : null,
-        match_confidence: match.confidence,
-        match_explanation: match.explanation,
-      };
-      if (!match.automatic || !match.course) {
-        job = await updateProcessingJob(job.id, token, {
-          ...common, stage: 'course_needed', runner_token: null, lease_expires_at: null,
-        });
-        await notifyProcessingJob(job, 'course_needed');
-        return job;
-      }
-      job = await updateProcessingJob(job.id, token, { ...common, stage: 'filing', course_id: match.course.id });
-    }
-
-    if (job.stage === 'filing') {
-      await fileProcessingJob(job.id, token);
-      const completed = await getProcessingJob(job.id);
-      if (completed) await notifyProcessingJob(completed, 'completed');
-      return completed;
+      job = await updateProcessingJob(job.id, token, {
+        stage: 'uploaded', uploaded_count: uploadedCount, runner_token: null, lease_expires_at: null,
+      });
+      void triggerWorker();
+      return job;
     }
     return job;
   } catch (error) {

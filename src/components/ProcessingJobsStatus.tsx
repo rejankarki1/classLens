@@ -10,11 +10,12 @@ import { getRecentProcessingJobs, onProcessingJobsChange, retryProcessingJob } f
 
 const priority: Record<ProcessingJob['stage'], number> = {
   course_needed: 0, retryable_failed: 0, terminal_failed: 0,
-  queued: 1, uploading: 1, analyzing: 1, filing: 1, completed: 2,
+  queued: 1, uploading: 1, uploaded: 1, analyzing: 1, filing: 1, completed: 2,
 };
 
 function label(job: ProcessingJob): string {
   if (job.stage === 'uploading') return `Uploading ${job.uploadedCount} of ${job.totalCount} pages…`;
+  if (job.stage === 'uploaded') return 'Waiting to be processed…';
   if (job.stage === 'analyzing') return 'Analyzing your lecture…';
   if (job.stage === 'course_needed') return 'Course needed';
   if (job.stage === 'filing') return 'Building your notebook…';

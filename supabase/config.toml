@@ -15,3 +15,7 @@ entrypoint = "./functions/ask-lecture/index.ts"
 [functions.generate-quiz]
 verify_jwt = false
 entrypoint = "./functions/generate-quiz/index.ts"
+
+[functions.process-job]
+verify_jwt = true
+entrypoint = "./functions/process-job/index.ts"

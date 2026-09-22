@@ -4,7 +4,8 @@ export const MAX_PROCESSING_FAILURES = 3;
 
 const transitions: Record<ProcessingJobStage, readonly ProcessingJobStage[]> = {
   queued: ['uploading', 'terminal_failed'],
-  uploading: ['uploading', 'analyzing', 'retryable_failed', 'terminal_failed'],
+  uploading: ['uploading', 'uploaded', 'analyzing', 'retryable_failed', 'terminal_failed'],
+  uploaded: ['uploaded', 'analyzing', 'terminal_failed'],
   analyzing: ['analyzing', 'course_needed', 'filing', 'retryable_failed', 'terminal_failed'],
   course_needed: ['filing', 'terminal_failed'],
   filing: ['filing', 'completed', 'retryable_failed', 'terminal_failed'],
