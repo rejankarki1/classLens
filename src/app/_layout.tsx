@@ -21,6 +21,7 @@ import { hasEnrolledCourses, onEnrollmentChange } from '@/services/enrollment';
 import { registerProcessingBackgroundTask, unregisterProcessingBackgroundTask } from '@/services/processingBackground';
 import { resumeProcessingJobs } from '@/services/processingOrchestrator';
 import { getProcessingJob } from '@/services/processingJobs';
+import { sweepLocalOriginals } from '@/services/originalsCleanupSweep';
 
 const authRoutes = ['login', 'signup'];
 
@@ -126,11 +127,15 @@ export default function RootLayout() {
     }
     void registerProcessingBackgroundTask().catch(() => undefined);
     void resumeProcessingJobs('foreground').catch(() => undefined);
+    void sweepLocalOriginals().catch(() => undefined);
     const recoveryTimer = setInterval(() => {
       if (AppState.currentState === 'active') void resumeProcessingJobs('foreground').catch(() => undefined);
     }, 60_000);
     const subscription = AppState.addEventListener('change', (state) => {
-      if (state === 'active') void resumeProcessingJobs('foreground').catch(() => undefined);
+      if (state === 'active') {
+        void resumeProcessingJobs('foreground').catch(() => undefined);
+        void sweepLocalOriginals().catch(() => undefined);
+      }
     });
     return () => { subscription.remove(); clearInterval(recoveryTimer); };
   }, [userId]);

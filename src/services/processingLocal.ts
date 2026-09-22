@@ -64,3 +64,17 @@ export function removeStagedPhoto(jobId: string, ownerId: string, photoId: strin
   if (photos.length) store().setItem(`${keyPrefix}${jobId}`, JSON.stringify({ ...session, photos }));
   else store().removeItem(`${keyPrefix}${jobId}`);
 }
+
+/**
+ * Session F phone-side sweep: clears any leftover local staging copy for a
+ * job once the server has confirmed the cloud originals are gone. Under the
+ * normal upload path removeStagedPhoto already clears each page right after
+ * its own upload confirms, well before a job is even eligible for cleanup,
+ * so this is a safety net for an interrupted upload (e.g. a crash mid-loop),
+ * not the primary path -- idempotent no-op when there is nothing left.
+ */
+export function removeStagedJobDirectory(jobId: string): void {
+  const directory = new Directory(new Directory(Paths.document, 'classlens-processing'), safeSegment(jobId));
+  if (directory.exists) directory.delete();
+  store().removeItem(`${keyPrefix}${jobId}`);
+}

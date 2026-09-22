@@ -19,3 +19,7 @@ entrypoint = "./functions/generate-quiz/index.ts"
 [functions.process-job]
 verify_jwt = true
 entrypoint = "./functions/process-job/index.ts"
+
+[functions.cleanup-originals]
+verify_jwt = true
+entrypoint = "./functions/cleanup-originals/index.ts"
