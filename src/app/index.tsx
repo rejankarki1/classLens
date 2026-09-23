@@ -249,7 +249,20 @@ export default function HomeScreen() {
 
         {!loading && !error ? (
           <View style={styles.section}>
-            <SectionHeader title="Continue studying" detail="Latest lectures" />
+            <View style={styles.courseHeader}>
+              <SectionHeader title="Continue studying" detail="Latest lectures" />
+
+              <Pressable
+                accessibilityRole="link"
+                accessibilityLabel="View semester timeline"
+                onPress={() => router.push('/timeline' as never)}
+                style={({ pressed }) => [styles.timelineLinkWrap, pressed && styles.pressed]}
+              >
+                <ThemedText type="small" style={styles.timelineLink}>
+                  View timeline →
+                </ThemedText>
+              </Pressable>
+            </View>
 
             {recentError ? (
               <AppButton
@@ -880,6 +893,15 @@ const styles = StyleSheet.create({
   addButtonText: {
     color: Brand.lime,
     fontSize: 21,
+  },
+
+  timelineLinkWrap: {
+    alignSelf: "flex-end",
+  },
+
+  timelineLink: {
+    color: Brand.forest,
+    fontWeight: "700",
   },
 
   studyPanel: {

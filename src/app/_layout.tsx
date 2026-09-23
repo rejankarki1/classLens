@@ -297,6 +297,16 @@ export default function RootLayout() {
           name="course-resolution"
           options={{ title: 'Choose course' }}
         />
+
+        <Stack.Screen
+          name="timeline"
+          options={{ title: 'Semester timeline' }}
+        />
+
+        <Stack.Screen
+          name="schedule"
+          options={{ title: 'Class schedule' }}
+        />
       </Stack>
     </ThemeProvider>
   );

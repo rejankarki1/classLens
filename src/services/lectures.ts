@@ -59,6 +59,28 @@ export async function getLectures(courseId: string): Promise<Lecture[]> {
   return data.map(fromRow);
 }
 
+/** Every lecture the signed-in student owns, across all courses, newest first. */
+export async function getMyLectures(): Promise<Lecture[]> {
+  if (getDataMode() === 'mock') {
+    return [...lectures].sort((a, b) => b.createdAt.localeCompare(a.createdAt) || a.id.localeCompare(b.id)).map(copy);
+  }
+
+  const { supabase } = await import('@/lib/supabase');
+  const { data: auth } = await supabase.auth.getSession();
+  const ownerId = auth.session?.user.id;
+  if (!ownerId) throw new Error('You are signed out. Sign in and try again.');
+  const { data, error } = await supabase
+    .from('lectures')
+    .select(lectureColumns)
+    .eq('owner_id', ownerId)
+    .order('created_at', { ascending: false })
+    .order('id')
+    .returns<LectureRow[]>();
+
+  if (error) throw new Error(`Could not load your lectures: ${error.message}`);
+  return data.map(fromRow);
+}
+
 export async function getLecture(id: string): Promise<Lecture | null> {
   if (getDataMode() === 'mock') {
     const lecture = lectures.find((item) => item.id === id);

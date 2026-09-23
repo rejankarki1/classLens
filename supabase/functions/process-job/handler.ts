@@ -1,5 +1,5 @@
 import { Failure, json, cors, base64, loadCapturePhoto, requestGemini } from '../_shared/ai.ts';
-import { matchEnrolledCourse, type CourseRow } from '../_shared/courseMatch.ts';
+import { matchEnrolledCourse, type CourseRow, type ScheduleSignal } from '../_shared/courseMatch.ts';
 import { parseCaptureAnalysis } from '../../../src/lib/captureAnalysis.ts';
 
 // Session C worker: atomic claim -> reuse-or-run analysis -> match -> idempotent
@@ -49,10 +49,12 @@ type CaptureRow = {
   page_number: number;
   storage_path: string;
   mime_type: string;
+  captured_at: string;
 };
 type LoadedCapture = CaptureRow & { image: Uint8Array; mime: string };
 type GeminiFile = { name: string; uri: string; mimeType: string };
 type MembershipRow = { course_id: string; courses: CourseRow | CourseRow[] | null };
+type ScheduleRow = { course_id: string; day_of_week: number; start_time: string; end_time: string };
 
 const photoProperties = {
   captureId: { type: 'string' },
@@ -299,7 +301,7 @@ export function createHandler(config: Config, fetcher: typeof fetch = fetch, log
 
       stage = 'load-captures';
       const capturesResponse = await rest(fetcher,
-        `${origin}/rest/v1/captures?processing_job_id=eq.${job.id}&select=id,owner_id,capture_session_id,page_number,storage_path,mime_type&order=page_number`,
+        `${origin}/rest/v1/captures?processing_job_id=eq.${job.id}&select=id,owner_id,capture_session_id,page_number,storage_path,mime_type,captured_at&order=page_number`,
         headers, controller.signal);
       if (!capturesResponse.ok) throw new Failure(502, 'DATABASE', 'Could not read job captures.');
       const captureRows = (await capturesResponse.json()) as CaptureRow[];
@@ -447,7 +449,25 @@ export function createHandler(config: Config, fetcher: typeof fetch = fetch, log
       if (!membershipsResponse.ok) throw new Failure(502, 'DATABASE', 'Could not load enrolled courses.');
       const memberships = (await membershipsResponse.json()) as MembershipRow[];
       const courses = memberships.map(courseRow).filter((course): course is CourseRow => course !== null);
-      const match = matchEnrolledCourse(analysis, courses);
+
+      // Session I: the earliest capture in this session, plus the owner's
+      // optional class schedule, as a bounded signal for the matcher --
+      // never a filter (courses above is already enrolled-only).
+      const earliestCapturedAt = captureRows.reduce<string | null>(
+        (earliest, capture) => (!earliest || capture.captured_at < earliest ? capture.captured_at : earliest), null,
+      );
+      const schedulesResponse = await rest(fetcher,
+        `${origin}/rest/v1/course_schedules?user_id=eq.${job.owner_id}&select=course_id,day_of_week,start_time,end_time`,
+        headers, controller.signal);
+      const scheduleRows = schedulesResponse.ok ? ((await schedulesResponse.json()) as ScheduleRow[]) : [];
+      const schedules: ScheduleSignal[] = scheduleRows.map((row) => ({
+        courseId: row.course_id, dayOfWeek: row.day_of_week, startTime: row.start_time, endTime: row.end_time,
+      }));
+
+      const match = matchEnrolledCourse(analysis, courses, {
+        capturedAt: earliestCapturedAt ? new Date(earliestCapturedAt) : null,
+        schedules,
+      });
       const common = {
         capture_analysis_id: analysisId,
         suggested_course_id: match.course?.id ?? null,

@@ -55,6 +55,7 @@ function captureRows() {
   return ids.map((id, index) => ({
     id, owner_id: ownerId, capture_session_id: sessionId, page_number: index + 1,
     storage_path: `captures/${ownerId}/${id}/photo.jpg`, mime_type: 'image/jpeg',
+    captured_at: '2026-09-22T09:10:00.000Z',
   }));
 }
 function jobRow(overrides = {}) {
@@ -129,6 +130,10 @@ function setup(overrides = {}) {
     if (url.includes('/rest/v1/course_memberships?user_id=eq.') && (!init.method || init.method === 'GET')) {
       return json(state.memberships);
     }
+    if (url.includes('/rest/v1/course_schedules?user_id=eq.') && (!init.method || init.method === 'GET')) {
+      if (overrides.scheduleReadFails) return new Response('unavailable', { status: 500 });
+      return json(overrides.schedules ?? []);
+    }
     if (url.includes(`/rest/v1/processing_jobs?id=eq.${jobId}&runner_token=eq.`) && init.method === 'PATCH') {
       const body = JSON.parse(init.body);
       state.jobPatches.push(body);
@@ -193,6 +198,13 @@ function request(bearer = 'user-token') {
   assert.equal(freshAnalysis.state.fileCalls, 1);
   assert.equal(freshAnalysis.state.jobPatches.at(-1).stage, 'filing');
   assert.equal(freshAnalysis.state.jobPatches.at(-1).course_id, courseId);
+  assert.equal(freshAnalysis.calls.some((call) => call.url.includes('/rest/v1/course_schedules?user_id=eq.')), true, "the worker must read the owner's class schedule as a matching signal");
+
+  // A schedule-read failure must never block filing: the signal is best-effort.
+  const scheduleReadFails = setup({ scheduleReadFails: true });
+  const scheduleFailResponse = await scheduleReadFails.handler(request());
+  assert.equal(scheduleFailResponse.status, 200);
+  assert.deepEqual(await scheduleFailResponse.json(), { claimed: true, jobId, stage: 'completed', lectureId: scheduleReadFails.state.filedLectureId });
 
   const reuseByJob = setup({ job: jobRow({ capture_analysis_id: '55555555-5555-4555-8555-555555555555' }) });
   const reuseResponse = await reuseByJob.handler(request());

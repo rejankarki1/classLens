@@ -1,5 +1,5 @@
 import { useCallback, useState } from 'react';
-import { useFocusEffect } from 'expo-router';
+import { router, useFocusEffect } from 'expo-router';
 
 import {
   Pressable,
@@ -79,7 +79,8 @@ export default function ProfileScreen() {
         </ThemedText>
 
         <SettingRow title="Edit profile" />
-        <SettingRow title="Manage courses" />
+        <SettingRow title="Manage courses" onPress={() => router.push('/course-onboarding' as never)} />
+        <SettingRow title="Class schedule" onPress={() => router.push('/schedule' as never)} />
         <SettingRow title="Appearance" />
         <SettingRow title="Notifications" />
         <SettingRow title="Privacy" />
@@ -131,15 +132,19 @@ function ProfileRow({
 
 function SettingRow({
   title,
+  onPress,
 }: {
   title: string;
+  onPress?: () => void;
 }) {
   return (
     <Pressable
       accessibilityRole="button"
+      disabled={!onPress}
+      onPress={onPress}
       style={({ pressed }) => [
         styles.settingRow,
-        pressed && styles.pressed,
+        pressed && onPress && styles.pressed,
       ]}
     >
       <ThemedText style={styles.settingTitle}>

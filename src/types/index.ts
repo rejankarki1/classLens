@@ -26,3 +26,4 @@ export type {
   InboxEventType,
   InboxEvent,
 } from '@/features/processing/types';
+export type { CourseSchedule, SaveCourseScheduleInput } from '@/features/schedule/types';
