@@ -39,13 +39,35 @@ export async function registerDeviceToken(): Promise<void> {
     const ownerId = session?.user.id;
     if (!ownerId) return;
 
-    const { error } = await supabase
+    // Not a Postgres upsert: its ON CONFLICT DO UPDATE would need to SET
+    // owner_id (it's in the payload), and owner_id is deliberately excluded
+    // from the update grant so a token can never be silently reassigned
+    // between accounts. Check-then-insert-or-update instead, matching
+    // notebookCorrections.ts/quizAttempts.ts's existing convention. RLS
+    // scopes this select to rows we own, so a token already owned by a
+    // different account (e.g. reused after a reinstall) is invisible here
+    // and falls through to insert, which then fails on the unique
+    // constraint rather than reassigning ownership.
+    const { data: existing, error: existingError } = await supabase
       .from('device_push_tokens')
-      .upsert(
-        { owner_id: ownerId, expo_push_token: expoPushToken, platform, updated_at: new Date().toISOString() },
-        { onConflict: 'expo_push_token' },
-      );
-    if (error) throw error;
+      .select('id')
+      .eq('expo_push_token', expoPushToken)
+      .returns<{ id: string }[]>()
+      .maybeSingle();
+    if (existingError) throw existingError;
+
+    if (existing) {
+      const { error } = await supabase
+        .from('device_push_tokens')
+        .update({ platform, updated_at: new Date().toISOString() })
+        .eq('id', existing.id);
+      if (error) throw error;
+    } else {
+      const { error } = await supabase
+        .from('device_push_tokens')
+        .insert({ owner_id: ownerId, expo_push_token: expoPushToken, platform });
+      if (error) throw error;
+    }
 
     if (lastRegisteredToken && lastRegisteredToken !== expoPushToken) {
       await supabase.from('device_push_tokens').delete().eq('expo_push_token', lastRegisteredToken);
