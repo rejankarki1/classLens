@@ -23,7 +23,12 @@ export function parseQuizResult(value: unknown): GenerateQuizResult {
     if (new Set(options).size !== 4) throw new Error('Quiz options must be distinct.');
     const correctAnswer = text(q.correctAnswer);
     if (!options.includes(correctAnswer)) throw new Error('Correct answer must match an option.');
-    return { question: text(q.question), options, correctAnswer, explanation: text(q.explanation) };
+    // citedPages is secondary metadata: an absent or malformed value degrades
+    // to no citations rather than failing an otherwise-valid question.
+    const citedPages = Array.isArray(q.citedPages) && q.citedPages.every((page): page is number => Number.isInteger(page))
+      ? q.citedPages
+      : [];
+    return { question: text(q.question), options, correctAnswer, explanation: text(q.explanation), citedPages };
   });
   if (new Set(questions.map(q => q.question)).size !== 5) throw new Error('Quiz questions must be distinct.');
   return { title, questions };

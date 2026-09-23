@@ -307,6 +307,11 @@ export default function RootLayout() {
           name="schedule"
           options={{ title: 'Class schedule' }}
         />
+
+        <Stack.Screen
+          name="quiz-review"
+          options={{ title: 'Missed questions' }}
+        />
       </Stack>
     </ThemeProvider>
   );

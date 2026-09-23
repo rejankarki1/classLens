@@ -47,3 +47,19 @@ export interface Quiz {
     explanation: string;
   }[];
 }
+
+/** Session K: a question the student answered incorrectly, with its source citation intact. */
+export interface MissedQuestion {
+  id: string;
+  quizAttemptId: string;
+  lectureId: string;
+  lectureTitle: string;
+  questionIndex: number;
+  question: string;
+  options: string[];
+  correctAnswer: string;
+  selectedAnswer: string;
+  explanation: string;
+  citedPages: number[];
+  createdAt: string;
+}

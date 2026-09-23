@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, TextInput, View } from 'react-native';
 import { Brand } from '@/constants/theme';
 import { askLecture, generateQuiz } from '@/services/ai';
+import { recordMissedQuestion, saveQuizAttempt } from '@/services/quizAttempts';
 import type { GenerateQuizResult } from '@/types';
 import { ThemedText } from './themed-text';
 import { AppButton } from './ui/AppButton';
@@ -15,6 +16,7 @@ export function StudyActions({ lectureId }: { lectureId: string }) {
   const [answer, setAnswer] = useState('');
   const [citedPages, setCitedPages] = useState<number[]>([]);
   const [quiz, setQuiz] = useState<GenerateQuizResult | null>(null);
+  const [attemptId, setAttemptId] = useState<string | null>(null);
   const [index, setIndex] = useState(0);
   const [selected, setSelected] = useState<string | null>(null);
   const [score, setScore] = useState(0);
@@ -57,6 +59,8 @@ export function StudyActions({ lectureId }: { lectureId: string }) {
       const result = await generateQuiz(lectureId);
       setQuiz(result);
       restart();
+      // Best-effort: a persistence failure must never block taking the quiz.
+      saveQuizAttempt(lectureId, result).then((saved) => setAttemptId(saved.id)).catch(() => setAttemptId(null));
     } catch (caught) {
       setError(message(caught));
     } finally {
@@ -64,11 +68,15 @@ export function StudyActions({ lectureId }: { lectureId: string }) {
     }
   }
 
-  function choose(option: string, correctAnswer: string) {
+  function choose(option: string, item: GenerateQuizResult['questions'][number], questionIndex: number) {
     // Answers lock on first tap, so the score can never be inflated.
     if (selected !== null) return;
     setSelected(option);
-    if (option === correctAnswer) setScore((value) => value + 1);
+    if (option === item.correctAnswer) {
+      setScore((value) => value + 1);
+    } else if (attemptId) {
+      recordMissedQuestion(attemptId, questionIndex, item, option).catch(() => undefined);
+    }
   }
 
   function advance() {
@@ -151,7 +159,7 @@ export function StudyActions({ lectureId }: { lectureId: string }) {
               accessibilityLabel={option}
               accessibilityState={{ selected: chosen, disabled: answered }}
               disabled={answered}
-              onPress={() => choose(option, item.correctAnswer)}
+              onPress={() => choose(option, item, index)}
               style={({ pressed }) => [
                 styles.option,
                 answered && correct && styles.correct,
@@ -169,6 +177,11 @@ export function StudyActions({ lectureId }: { lectureId: string }) {
               {right ? 'Correct' : 'Not quite'}
             </ThemedText>
             <ThemedText style={styles.explanation}>{item.explanation}</ThemedText>
+            {item.citedPages.length ? (
+              <ThemedText style={styles.explanation}>
+                Cited: {item.citedPages.map((page) => `page ${page}`).join(', ')}
+              </ThemedText>
+            ) : null}
           </> : null}
         </View>
 
@@ -199,7 +212,7 @@ export function StudyActions({ lectureId }: { lectureId: string }) {
       </View>
 
       <AppButton title="Try Again" secondary onPress={restart} />
-      <AppButton title="Back to Notebook" secondary onPress={() => { setQuiz(null); restart(); }} />
+      <AppButton title="Back to Notebook" secondary onPress={() => { setQuiz(null); setAttemptId(null); restart(); }} />
     </View> : null}
 
     {error ? <ThemedText accessibilityLiveRegion="polite" style={styles.error}>{error}</ThemedText> : null}
