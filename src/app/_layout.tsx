@@ -304,11 +304,6 @@ export default function RootLayout() {
         />
 
         <Stack.Screen
-          name="schedule"
-          options={{ title: 'Class schedule' }}
-        />
-
-        <Stack.Screen
           name="quiz-review"
           options={{ title: 'Missed questions' }}
         />

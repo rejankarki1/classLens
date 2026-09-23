@@ -80,7 +80,6 @@ export default function ProfileScreen() {
 
         <SettingRow title="Edit profile" />
         <SettingRow title="Manage courses" onPress={() => router.push('/course-onboarding' as never)} />
-        <SettingRow title="Class schedule" onPress={() => router.push('/schedule' as never)} />
         <SettingRow title="Review missed questions" onPress={() => router.push('/quiz-review' as never)} />
         <SettingRow title="Appearance" />
         <SettingRow title="Notifications" />
