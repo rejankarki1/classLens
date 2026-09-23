@@ -10,6 +10,7 @@ import { runProcessingJob } from '@/services/processingOrchestrator';
 import { getProcessingJob, onProcessingJobsChange, retryProcessingJob } from '@/services/processingJobs';
 import { requestProcessingNotificationPermission } from '@/services/processingNotifications';
 import { triggerProcessingBackgroundTaskForTesting } from '@/services/processingBackground';
+import { registerDeviceToken } from '@/services/pushTokens';
 
 function copy(job: ProcessingJob | null) {
   if (!job) return { title: 'Opening your processing job', body: 'Checking the saved lecture state.' };
@@ -54,6 +55,7 @@ export default function ProcessingScreen() {
   async function enableNotifications() {
     setNotifying(true);
     const allowed = await requestProcessingNotificationPermission().catch(() => false);
+    if (allowed) void registerDeviceToken().catch(() => undefined);
     setNotifying(false);
     setError(allowed ? '' : 'Notifications are off. Home will continue to show this job.');
   }

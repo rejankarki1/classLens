@@ -93,6 +93,9 @@ export async function signIn(email: string, password: string): Promise<void> {
 
 export async function signOut(): Promise<void> {
   requireSupabase('Sign out');
+  const { removeMyDeviceTokens } = await import('./pushTokens');
+  // Removal needs a live session for RLS, so it must run before signOut clears it.
+  await removeMyDeviceTokens().catch(() => undefined);
   const { supabase } = await import('@/lib/supabase');
   const { error } = await supabase.auth.signOut();
   if (error) throw new Error(error.message);

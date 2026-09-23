@@ -22,6 +22,7 @@ import { registerProcessingBackgroundTask, unregisterProcessingBackgroundTask } 
 import { resumeProcessingJobs } from '@/services/processingOrchestrator';
 import { getProcessingJob } from '@/services/processingJobs';
 import { sweepLocalOriginals } from '@/services/originalsCleanupSweep';
+import { registerDeviceToken } from '@/services/pushTokens';
 
 const authRoutes = ['login', 'signup'];
 
@@ -138,6 +139,21 @@ export default function RootLayout() {
       }
     });
     return () => { subscription.remove(); clearInterval(recoveryTimer); };
+  }, [userId]);
+
+  useEffect(() => {
+    if (!userId) return;
+    // Best-effort: a granted permission from a previous session re-registers
+    // here so a fresh launch keeps the token current without the user
+    // re-visiting the notification prompt on Processing.
+    void registerDeviceToken().catch(() => undefined);
+    // The OS can rotate the token at any time (reinstall, restore, etc.).
+    // Re-running registration resolves the new current token and retires
+    // the stale one -- the invalid-old-token half of the lifecycle.
+    const tokenSubscription = Notifications.addPushTokenListener(() => {
+      void registerDeviceToken().catch(() => undefined);
+    });
+    return () => tokenSubscription.remove();
   }, [userId]);
 
   useEffect(() => {
