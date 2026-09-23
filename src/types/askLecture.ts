@@ -1,1 +1,1 @@
-export type AskLectureResult = { answer: string };
+export type AskLectureResult = { answer: string; citedPages: number[] };

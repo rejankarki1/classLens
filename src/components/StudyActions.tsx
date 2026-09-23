@@ -13,6 +13,7 @@ function message(error: unknown): string {
 export function StudyActions({ lectureId }: { lectureId: string }) {
   const [question, setQuestion] = useState('');
   const [answer, setAnswer] = useState('');
+  const [citedPages, setCitedPages] = useState<number[]>([]);
   const [quiz, setQuiz] = useState<GenerateQuizResult | null>(null);
   const [index, setIndex] = useState(0);
   const [selected, setSelected] = useState<string | null>(null);
@@ -35,9 +36,11 @@ export function StudyActions({ lectureId }: { lectureId: string }) {
     setBusy('ask');
     setError('');
     setAnswer('');
+    setCitedPages([]);
     try {
       const result = await askLecture(lectureId, trimmed);
       setAnswer(result.answer);
+      setCitedPages(result.citedPages);
     } catch (caught) {
       setError(message(caught));
     } finally {
@@ -105,6 +108,11 @@ export function StudyActions({ lectureId }: { lectureId: string }) {
     {answer ? <View style={styles.answer}>
       <ThemedText style={styles.answerLabel}>ANSWER</ThemedText>
       <ThemedText accessibilityLiveRegion="polite" style={styles.body}>{answer}</ThemedText>
+      {citedPages.length ? (
+        <ThemedText style={styles.explanation}>
+          Cited: {citedPages.map((page) => `page ${page}`).join(', ')}
+        </ThemedText>
+      ) : null}
     </View> : null}
 
     {quiz ? null : <AppButton

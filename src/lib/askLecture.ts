@@ -9,7 +9,13 @@ export function parseAskLectureInput(lectureId: unknown, question: unknown) {
 
 export function parseAskLectureResult(value: unknown): AskLectureResult {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Invalid lecture answer.');
-  const answer = (value as Record<string, unknown>).answer;
+  const row = value as Record<string, unknown>;
+  const answer = row.answer;
   if (typeof answer !== 'string' || !answer.trim()) throw new Error('Invalid lecture answer.');
-  return { answer: answer.trim() };
+  // citedPages is secondary metadata: an absent or malformed value degrades
+  // to no citations rather than failing an otherwise-good answer.
+  const citedPages = Array.isArray(row.citedPages) && row.citedPages.every((page): page is number => Number.isInteger(page))
+    ? row.citedPages
+    : [];
+  return { answer: answer.trim(), citedPages };
 }

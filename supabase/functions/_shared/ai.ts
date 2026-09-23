@@ -77,6 +77,21 @@ export async function loadCapturePhoto(origin: string, headers: Record<string, s
   return { mime, image };
 }
 
+/**
+ * Extracts the caller's real Authorization header so it can be forwarded to
+ * PostgREST, letting RLS resolve auth.uid() to the actual signed-in user
+ * rather than whatever anon/publishable identity the function itself holds.
+ * Checks only presence and shape -- an invalid or expired token still fails
+ * safely downstream when PostgREST rejects the forwarded request.
+ */
+export function requireCallerAuthorization(request: Request): string {
+  const authorization = request.headers.get('authorization');
+  if (!authorization || !authorization.startsWith('Bearer ') || authorization.length <= 'Bearer '.length) {
+    throw new Failure(401, 'AUTH', 'Sign in required.');
+  }
+  return authorization;
+}
+
 export function requestGemini(fetcher: typeof fetch, key: string, signal: AbortSignal, prompt: string, parts: unknown[], schema: unknown, maxOutputTokens: number) {
   return fetcher('https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite:generateContent', {
     method: 'POST', signal,
