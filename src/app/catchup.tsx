@@ -1,4 +1,5 @@
 import {
+  ActivityIndicator,
   Animated,
   Image,
   ScrollView,
@@ -294,6 +295,7 @@ export default function CatchupMateScreen() {
 
       {loading ? (
         <View style={styles.loadingCard}>
+          <ActivityIndicator color={Brand.forest} accessibilityLabel="Checking what you missed" />
           <ThemedText style={styles.loadingTitle}>
             Checking what you missed...
           </ThemedText>
@@ -315,6 +317,15 @@ export default function CatchupMateScreen() {
           >
             We couldn't load your catch-up information.
           </ThemedText>
+
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Try loading CatchupMate again"
+            onPress={() => setReload((value) => value + 1)}
+            style={({ pressed }) => [styles.retryButton, pressed && styles.pressed]}
+          >
+            <ThemedText allowFontScaling={false} style={styles.retryText}>Try again</ThemedText>
+          </Pressable>
         </View>
       ) : (
         <CatchupAlert
@@ -1021,6 +1032,22 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
 
+  retryButton: {
+    alignSelf: 'flex-start',
+    marginTop: 4,
+    minHeight: 40,
+    paddingHorizontal: 16,
+    justifyContent: 'center',
+    borderRadius: 12,
+    backgroundColor: Brand.forest,
+  },
+
+  retryText: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '800',
+  },
+
   alertCard: {
     width: '100%',
     minWidth: 0,
@@ -1487,7 +1514,9 @@ const styles = StyleSheet.create({
   },
 
   lock: {
-    color: '#7A857C',
+    // #7A857C measured at 3.64:1 on this background -- below WCAG AA's 4.5:1.
+    // Darkened to 5.01:1, same hue.
+    color: '#656E66',
     flexShrink: 0,
     fontSize: 13,
   },

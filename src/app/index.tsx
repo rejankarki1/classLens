@@ -647,7 +647,9 @@ const styles = StyleSheet.create({
   },
 
   eyebrow: {
-    color: "#738079",
+    // #738079 measured at 3.78:1 on the paper background at this font size --
+    // below WCAG AA's 4.5:1 for normal text. Darkened to 5.45:1, same hue.
+    color: "#5C6660",
     fontSize: 11,
     letterSpacing: 1.2,
   },
@@ -808,7 +810,9 @@ const styles = StyleSheet.create({
   },
 
   captureButtonSubtitle: {
-    color: "#748077",
+    // #748077 measured at 3.76:1 on this background -- below WCAG AA's 4.5:1.
+    // Darkened to 5.06:1, same hue.
+    color: "#616B63",
     fontSize: 11,
   },
 
@@ -866,7 +870,9 @@ const styles = StyleSheet.create({
   },
 
   modeSoon: {
-    color: "#B5C7BB",
+    // #B5C7BB measured at 4.24:1 on this dark background -- below WCAG AA's
+    // 4.5:1. Lightened to 5.12:1, same hue.
+    color: "#C7DACD",
     fontSize: 7,
     letterSpacing: 1,
     fontWeight: "800",
@@ -930,7 +936,9 @@ const styles = StyleSheet.create({
   },
 
   studyEyebrow: {
-    color: "#72816F",
+    // #72816F measured at 3.51:1 on this background -- below WCAG AA's 4.5:1.
+    // Darkened to 5.06:1, same hue.
+    color: "#5B6758",
     fontSize: 9,
     letterSpacing: 1.3,
     fontWeight: "800",

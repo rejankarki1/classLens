@@ -1,9 +1,10 @@
 import { router, useLocalSearchParams } from 'expo-router';
 import { useEffect, useState } from 'react';
-import { ActivityIndicator, Pressable, StyleSheet, View } from 'react-native';
+import { Pressable, StyleSheet, View } from 'react-native';
 
 import { AddCourseSheet } from '@/components/AddCourseSheet';
 import { ThemedText } from '@/components/themed-text';
+import { EmptyState } from '@/components/ui/Editorial';
 import { Screen } from '@/components/ui/Screen';
 import { Brand, Fonts } from '@/constants/theme';
 import type { Course, ProcessingJob } from '@/types';
@@ -17,19 +18,27 @@ export default function CourseResolutionScreen() {
   const [job, setJob] = useState<ProcessingJob | null>(null);
   const [courses, setCourses] = useState<Course[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadFailed, setLoadFailed] = useState(false);
   const [saving, setSaving] = useState(false);
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState('');
+  const [attempt, setAttempt] = useState(0);
 
   useEffect(() => {
     let active = true;
+    setLoading(true);
+    setLoadFailed(false);
     if (!jobId) { setLoading(false); return; }
     Promise.all([getProcessingJob(jobId), getMyEnrolledCourses()])
       .then(([nextJob, nextCourses]) => { if (active) { setJob(nextJob); setCourses(nextCourses); } })
-      .catch((caught) => { if (active) setError(caught instanceof Error ? caught.message : 'Could not load course choices.'); })
+      .catch((caught) => {
+        if (!active) return;
+        setError(caught instanceof Error ? caught.message : 'Could not load course choices.');
+        setLoadFailed(true);
+      })
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
-  }, [jobId]);
+  }, [jobId, attempt]);
 
   async function choose(course: Course) {
     if (!job || saving) return;
@@ -47,7 +56,8 @@ export default function CourseResolutionScreen() {
     }
   }
 
-  if (loading) return <Screen><ActivityIndicator color={Brand.forest} accessibilityLabel="Loading enrolled courses" /></Screen>;
+  if (loading) return <Screen><EmptyState loading title="Loading your courses" description="Gathering the courses you're enrolled in." /></Screen>;
+  if (loadFailed) return <Screen><EmptyState title="This didn't load" description="We couldn't load your course choices. Please try again." action="Try again" onPress={() => setAttempt((value) => value + 1)} /></Screen>;
 
   return (
     <>

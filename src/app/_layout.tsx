@@ -312,6 +312,11 @@ export default function RootLayout() {
           name="quiz-review"
           options={{ title: 'Missed questions' }}
         />
+
+        <Stack.Screen
+          name="privacy"
+          options={{ title: 'Privacy & deletion' }}
+        />
       </Stack>
     </ThemeProvider>
   );

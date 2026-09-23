@@ -84,7 +84,7 @@ export default function ProfileScreen() {
         <SettingRow title="Review missed questions" onPress={() => router.push('/quiz-review' as never)} />
         <SettingRow title="Appearance" />
         <SettingRow title="Notifications" />
-        <SettingRow title="Privacy" />
+        <SettingRow title="Privacy" onPress={() => router.push('/privacy' as never)} />
         <SettingRow title="Help & feedback" />
 
         <Pressable
