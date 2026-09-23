@@ -54,7 +54,7 @@ type CaptureRow = {
 type LoadedCapture = CaptureRow & { image: Uint8Array; mime: string };
 type GeminiFile = { name: string; uri: string; mimeType: string };
 type MembershipRow = { course_id: string; courses: CourseRow | CourseRow[] | null };
-type ScheduleRow = { course_id: string; day_of_week: number; start_time: string; end_time: string };
+type ScheduleRow = { course_id: string; day_of_week: number; start_time: string; end_time: string; timezone: string };
 
 const photoProperties = {
   captureId: { type: 'string' },
@@ -457,11 +457,11 @@ export function createHandler(config: Config, fetcher: typeof fetch = fetch, log
         (earliest, capture) => (!earliest || capture.captured_at < earliest ? capture.captured_at : earliest), null,
       );
       const schedulesResponse = await rest(fetcher,
-        `${origin}/rest/v1/course_schedules?user_id=eq.${job.owner_id}&select=course_id,day_of_week,start_time,end_time`,
+        `${origin}/rest/v1/course_schedules?user_id=eq.${job.owner_id}&select=course_id,day_of_week,start_time,end_time,timezone`,
         headers, controller.signal);
       const scheduleRows = schedulesResponse.ok ? ((await schedulesResponse.json()) as ScheduleRow[]) : [];
       const schedules: ScheduleSignal[] = scheduleRows.map((row) => ({
-        courseId: row.course_id, dayOfWeek: row.day_of_week, startTime: row.start_time, endTime: row.end_time,
+        courseId: row.course_id, dayOfWeek: row.day_of_week, startTime: row.start_time, endTime: row.end_time, timezone: row.timezone,
       }));
 
       const match = matchEnrolledCourse(analysis, courses, {

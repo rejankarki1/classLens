@@ -1,12 +1,29 @@
 import { getDataMode } from '@/lib/dataMode';
 import type { CourseSchedule, SaveCourseScheduleInput } from '@/types';
 
-type ScheduleRow = { id: string; course_id: string; day_of_week: number; start_time: string; end_time: string };
+type ScheduleRow = { id: string; course_id: string; day_of_week: number; start_time: string; end_time: string; timezone: string };
 
-const scheduleColumns = 'id, course_id, day_of_week, start_time, end_time';
+const scheduleColumns = 'id, course_id, day_of_week, start_time, end_time, timezone';
 
 function fromRow(row: ScheduleRow): CourseSchedule {
-  return { id: row.id, courseId: row.course_id, dayOfWeek: row.day_of_week, startTime: row.start_time, endTime: row.end_time };
+  return { id: row.id, courseId: row.course_id, dayOfWeek: row.day_of_week, startTime: row.start_time, endTime: row.end_time, timezone: row.timezone };
+}
+
+/**
+ * The IANA zone the class actually meets in, from the device's own clock --
+ * never typed by the student. start_time/end_time are naive wall-clock
+ * values with no zone of their own; without this, the worker would have no
+ * way to convert a UTC captured_at into the class's real local time. Falls
+ * back to UTC only if Intl is unavailable, which never happens in practice
+ * on a real device.
+ */
+function deviceTimezone(): string {
+  try {
+    const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    return zone && zone.trim() ? zone : 'UTC';
+  } catch {
+    return 'UTC';
+  }
 }
 
 /** Mock mode has one demo user; schedules start empty and reset on reload. */
@@ -65,10 +82,12 @@ export async function saveSchedule(input: SaveCourseScheduleInput): Promise<Cour
   const endTime = requireTime(input.endTime, 'End time');
   if (endTime <= startTime) throw new Error('End time must be after start time.');
 
+  const timezone = deviceTimezone();
+
   if (getDataMode() === 'mock') {
     const existing = [...mockSchedules.values()].find((row) => row.courseId === courseId && row.dayOfWeek === input.dayOfWeek && row.startTime === startTime);
     const id = existing?.id ?? `${courseId}:${input.dayOfWeek}:${startTime}`;
-    const saved: CourseSchedule = { id, courseId, dayOfWeek: input.dayOfWeek, startTime, endTime };
+    const saved: CourseSchedule = { id, courseId, dayOfWeek: input.dayOfWeek, startTime, endTime, timezone };
     mockSchedules.set(id, saved);
     notifyScheduleChange();
     return { ...saved };
@@ -78,7 +97,7 @@ export async function saveSchedule(input: SaveCourseScheduleInput): Promise<Cour
   const { data, error } = await supabase
     .from('course_schedules')
     .upsert(
-      { user_id: userId, course_id: courseId, day_of_week: input.dayOfWeek, start_time: startTime, end_time: endTime, updated_at: new Date().toISOString() },
+      { user_id: userId, course_id: courseId, day_of_week: input.dayOfWeek, start_time: startTime, end_time: endTime, timezone, updated_at: new Date().toISOString() },
       { onConflict: 'user_id,course_id,day_of_week,start_time' },
     )
     .select(scheduleColumns)

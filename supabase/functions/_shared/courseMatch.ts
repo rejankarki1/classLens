@@ -11,7 +11,10 @@ export type CourseMatchResult = { course: CourseRow | null; confidence: number; 
 // Session I: an optional per-course class time, used only to nudge ranking
 // among the courses already returned by the caller's enrolled-only `courses`
 // list -- it can never introduce a course that isn't already in that list.
-export type ScheduleSignal = { courseId: string; dayOfWeek: number; startTime: string; endTime: string };
+// timezone is the IANA zone the class meets in (captured from the student's
+// device when they saved the schedule) -- required because start_time/
+// end_time are naive wall-clock values with no zone of their own.
+export type ScheduleSignal = { courseId: string; dayOfWeek: number; startTime: string; endTime: string; timezone: string };
 export type MatchContext = { capturedAt?: Date | null; schedules?: ScheduleSignal[] };
 
 export const COURSE_MATCH_AUTO_THRESHOLD = 0.85;
@@ -48,20 +51,44 @@ function minutesOfDay(value: string): number {
   return hours * 60 + (minutes || 0);
 }
 
-// Deliberately compares in UTC rather than any device/server-local time zone,
-// so the result is identical regardless of where this runs. This is a
-// best-effort signal, not a correctness dependency -- a mismatched time zone
-// only means the bonus doesn't apply, never a wrong course being filed.
+const weekdayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+/**
+ * Converts a UTC instant into the day-of-week and minutes-of-day it falls on
+ * in the given IANA zone. Uses Intl (full tzdata, DST-correct) rather than a
+ * fixed offset -- a captured_at instant and a naive local start_time/end_time
+ * are meaningless to compare directly without first anchoring both to the
+ * same real-world clock.
+ */
+function localDayAndMinutes(instant: Date, timeZone: string): { day: number; minutes: number } {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone, weekday: 'short', hour: '2-digit', minute: '2-digit', hour12: false,
+  }).formatToParts(instant);
+  const weekday = parts.find((part) => part.type === 'weekday')?.value ?? '';
+  // hour12: false can render midnight as "24" on some ICU builds; normalize it.
+  const hour = Number(parts.find((part) => part.type === 'hour')?.value ?? '0') % 24;
+  const minute = Number(parts.find((part) => part.type === 'minute')?.value ?? '0');
+  return { day: weekdayNames.indexOf(weekday), minutes: hour * 60 + minute };
+}
+
+// Best-effort signal, not a correctness dependency: an unrecognized stored
+// timezone (should never happen -- it's captured from Intl, not typed) skips
+// that one schedule row rather than failing the whole match.
 function scheduleScore(course: CourseRow, capturedAt: Date | null | undefined, schedules: ScheduleSignal[]): number {
   if (!capturedAt || !schedules.length) return 0;
-  const day = capturedAt.getUTCDay();
-  const minutes = capturedAt.getUTCHours() * 60 + capturedAt.getUTCMinutes();
   const graceMinutes = 15;
   const matches = schedules.some((schedule) => {
-    if (schedule.courseId !== course.id || schedule.dayOfWeek !== day) return false;
+    if (schedule.courseId !== course.id) return false;
+    let local: { day: number; minutes: number };
+    try {
+      local = localDayAndMinutes(capturedAt, schedule.timezone);
+    } catch {
+      return false;
+    }
+    if (schedule.dayOfWeek !== local.day) return false;
     const start = minutesOfDay(schedule.startTime) - graceMinutes;
     const end = minutesOfDay(schedule.endTime) + graceMinutes;
-    return minutes >= start && minutes <= end;
+    return local.minutes >= start && local.minutes <= end;
   });
   return matches ? SCHEDULE_MATCH_WEIGHT : 0;
 }

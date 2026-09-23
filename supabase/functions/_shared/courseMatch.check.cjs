@@ -20,12 +20,23 @@ const cs3358 = { id: 'cs-3358', code: 'CS 3358', name: 'Data Structures', profes
 const bio1101 = { id: 'bio-1101', code: 'BIO 1101', name: 'Intro Biology', professor: 'Alvarez' };
 const courses = [cs3358, bio1101];
 
-// Tuesday 09:10 UTC -- inside a 09:00-10:15 CS 3358 schedule window.
-const capturedAt = new Date('2026-09-22T09:10:00.000Z');
-assert.equal(capturedAt.getUTCDay(), 2, 'fixture date must be a Tuesday for this test to mean anything');
+// Deliberately NOT the same clock hour in UTC and in the schedule's zone:
+// 2026-09-22T14:10:00.000Z is Tuesday 09:10 America/Chicago (CDT, UTC-5),
+// but Tuesday 14:10 in raw UTC terms -- outside the 09:00-10:15 window by
+// five hours. A fixture that happened to line up in UTC would pass even
+// with the pre-fix bug (comparing capturedAt.getUTCHours() directly against
+// naive local start_time/end_time); this fixture only passes if the
+// timezone conversion actually runs.
+const capturedAt = new Date('2026-09-22T14:10:00.000Z');
+function chicagoLocal(instant) {
+  const parts = new Intl.DateTimeFormat('en-US', { timeZone: 'America/Chicago', weekday: 'short', hour: '2-digit', minute: '2-digit', hour12: false }).formatToParts(instant);
+  return { weekday: parts.find((part) => part.type === 'weekday').value, hour: Number(parts.find((part) => part.type === 'hour').value) % 24, minute: Number(parts.find((part) => part.type === 'minute').value) };
+}
+assert.deepEqual(chicagoLocal(capturedAt), { weekday: 'Tue', hour: 9, minute: 10 }, 'fixture must be Tuesday 09:10 America/Chicago for this test to mean anything');
+assert.notEqual(capturedAt.getUTCHours(), 9, 'fixture must NOT also be 09:xx in raw UTC, or it would pass even with the pre-fix bug');
 
 const weakSignals = { courseSignals: [], topicSignals: ['linked list'] };
-const schedules = [{ courseId: 'cs-3358', dayOfWeek: 2, startTime: '09:00', endTime: '10:15' }];
+const schedules = [{ courseId: 'cs-3358', dayOfWeek: 2, startTime: '09:00', endTime: '10:15', timezone: 'America/Chicago' }];
 
 // Account A: a schedule for CS 3358 at the exact capture time, with weak
 // textual signals -- confidence should rise (schedule reason present) but
@@ -57,9 +68,19 @@ assert.ok(SCHEDULE_MATCH_WEIGHT + 0.25 < COURSE_MATCH_AUTO_THRESHOLD);
 console.log('PASS: SCHEDULE_MATCH_WEIGHT plus the maximum topic bonus stays below the auto-file threshold.');
 
 // A schedule on the wrong day, or outside the grace window, contributes nothing.
-const wrongDay = matchEnrolledCourse(weakSignals, courses, {
-  capturedAt: new Date('2026-09-23T09:10:00.000Z'), // Wednesday
-  schedules,
-});
+// Same local wall-clock time (09:10 Chicago), one calendar day later.
+const wrongDayCapturedAt = new Date('2026-09-23T14:10:00.000Z');
+assert.deepEqual(chicagoLocal(wrongDayCapturedAt), { weekday: 'Wed', hour: 9, minute: 10 });
+const wrongDay = matchEnrolledCourse(weakSignals, courses, { capturedAt: wrongDayCapturedAt, schedules });
 assert.deepEqual(wrongDay, withoutSchedule);
 console.log('PASS: a schedule on a different day contributes no bonus.');
+
+// An unrecognized stored timezone must skip that row, not throw and break
+// the whole match -- schedule rows are never user-typed, but defense here
+// still matters (e.g. a stale/renamed IANA zone name).
+const badTimezone = matchEnrolledCourse(weakSignals, courses, {
+  capturedAt,
+  schedules: [{ ...schedules[0], timezone: 'Not/AZone' }],
+});
+assert.deepEqual(badTimezone, withoutSchedule);
+console.log('PASS: an invalid stored timezone is skipped rather than throwing.');

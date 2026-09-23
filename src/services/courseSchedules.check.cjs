@@ -27,12 +27,14 @@ function load(dataMode, supabase) {
   const mock = load('mock', null);
   const first = await mock.saveSchedule({ courseId: 'cs-3358', dayOfWeek: 2, startTime: '09:00', endTime: '10:15' });
   assert.equal(first.endTime, '10:15');
+  assert.equal(typeof first.timezone, 'string');
+  assert.ok(first.timezone.length > 0, 'a saved schedule must capture a non-empty IANA timezone from the device');
   const second = await mock.saveSchedule({ courseId: 'cs-3358', dayOfWeek: 2, startTime: '09:00', endTime: '10:30' });
   assert.equal(second.id, first.id, 'a repeat save for the same course/day/start updates the same row');
   assert.equal(second.endTime, '10:30');
   const list = await mock.getMySchedules();
   assert.equal(list.length, 1);
-  console.log('PASS: mock mode upserts one row per course/day/start time.');
+  console.log('PASS: mock mode upserts one row per course/day/start time and captures a device timezone.');
 
   await assert.rejects(() => mock.saveSchedule({ courseId: 'cs-3358', dayOfWeek: 2, startTime: '10:00', endTime: '09:00' }), /after start time/);
   await assert.rejects(() => mock.saveSchedule({ courseId: 'cs-3358', dayOfWeek: 9, startTime: '09:00', endTime: '10:00' }), /between 0 and 6/);
@@ -46,7 +48,7 @@ function load(dataMode, supabase) {
   // Supabase mode: upsert targets the composite key; delete is scoped to id and user_id.
   let upsertCalls = 0;
   let deleteEqCalls = [];
-  const savedRow = { id: 'row-1', course_id: 'cs-3358', day_of_week: 2, start_time: '09:00', end_time: '10:15' };
+  const savedRow = { id: 'row-1', course_id: 'cs-3358', day_of_week: 2, start_time: '09:00', end_time: '10:15', timezone: 'America/Chicago' };
   const supabase = {
     auth: { getSession: async () => ({ data: { session: { user: { id: 'owner-1' } } }, error: null }) },
     from: (table) => {
@@ -55,6 +57,8 @@ function load(dataMode, supabase) {
         upsert: (values, options) => {
           upsertCalls += 1;
           assert.equal(values.user_id, 'owner-1');
+          assert.equal(typeof values.timezone, 'string');
+          assert.ok(values.timezone.length > 0, 'the upsert payload must include a non-empty device timezone');
           assert.equal(options.onConflict, 'user_id,course_id,day_of_week,start_time');
           return { select: () => ({ returns: () => ({ single: async () => ({ data: savedRow, error: null }) }) }) };
         },
@@ -70,6 +74,7 @@ function load(dataMode, supabase) {
   const supabaseMode = load('supabase', supabase);
   const saved = await supabaseMode.saveSchedule({ courseId: 'cs-3358', dayOfWeek: 2, startTime: '09:00', endTime: '10:15' });
   assert.equal(saved.courseId, 'cs-3358');
+  assert.equal(saved.timezone, 'America/Chicago');
   assert.equal(upsertCalls, 1);
 
   await supabaseMode.deleteSchedule('row-1');

@@ -8,6 +8,14 @@ begin;
 -- that isn't. course_id references the catalog on delete restrict, matching
 -- course_memberships: removing a schedule (or an enrollment) never deletes
 -- or orphans a catalog course.
+-- Pre-push amendment: start_time/end_time are naive wall-clock values with no
+-- zone of their own, and captured_at is a true UTC instant -- comparing them
+-- directly (as the worker originally did) silently never matched for any
+-- student outside UTC. timezone is the IANA zone the student was in when
+-- they saved this schedule (captured client-side via Intl, not typed), so
+-- the worker can convert captured_at into the class's real wall-clock time
+-- before comparing, correctly across DST via the zone database instead of a
+-- fixed offset.
 create table public.course_schedules (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references auth.users(id) on delete cascade,
@@ -15,6 +23,7 @@ create table public.course_schedules (
   day_of_week smallint not null check (day_of_week between 0 and 6),
   start_time time not null,
   end_time time not null check (end_time > start_time),
+  timezone text not null check (length(btrim(timezone)) > 0),
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   unique (user_id, course_id, day_of_week, start_time)
@@ -28,7 +37,7 @@ revoke all privileges on table public.course_schedules from public, anon, authen
 grant select, insert, delete on table public.course_schedules to authenticated;
 -- user_id and course_id are excluded from the update grant: correcting a time
 -- for the wrong course/day is a delete-and-recreate, not a silent retarget.
-grant update (day_of_week, start_time, end_time, updated_at) on table public.course_schedules to authenticated;
+grant update (day_of_week, start_time, end_time, timezone, updated_at) on table public.course_schedules to authenticated;
 
 create policy "Users read their own class schedules"
   on public.course_schedules for select to authenticated
