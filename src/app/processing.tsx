@@ -20,6 +20,9 @@ function copy(job: ProcessingJob | null) {
   if (job.stage === 'course_needed') return { title: 'Course needed', body: job.matchExplanation ?? 'Choose an enrolled course to finish filing.' };
   if (job.stage === 'filing') return { title: 'Building your notebook…', body: 'Saving one organized notebook for this capture session.' };
   if (job.stage === 'completed') return { title: 'Your notes are ready', body: 'The originals and saved analysis are filed together.' };
+  if (job.lastErrorCode === 'GEMINI_ALL_BUSY' && ['retryable_failed', 'terminal_failed'].includes(job.stage)) {
+    return { title: 'Your notes will be ready soon', body: 'You can leave ClassLens—we’ll keep trying in the background.' };
+  }
   if (job.stage === 'retryable_failed') return { title: 'Processing paused', body: job.lastErrorMessage ?? 'Open Home for recovery options.' };
   if (job.stage === 'terminal_failed') return { title: 'Processing needs attention', body: job.lastErrorMessage ?? 'Open Home for recovery options.' };
   return { title: 'Processing…', body: 'ClassLens is still working on this.' };
@@ -83,7 +86,8 @@ export default function ProcessingScreen() {
   }
 
   const status = copy(job);
-  const active = job && ['queued', 'uploading', 'uploaded', 'analyzing', 'filing'].includes(job.stage);
+  const overloaded = job?.lastErrorCode === 'GEMINI_ALL_BUSY';
+  const active = job && (['queued', 'uploading', 'uploaded', 'analyzing', 'filing'].includes(job.stage) || overloaded);
   return (
     <Screen>
       <View style={styles.header}>
@@ -101,7 +105,7 @@ export default function ProcessingScreen() {
       </View>
       <Pressable accessibilityRole="button" accessibilityLabel="Return Home while processing continues" onPress={() => router.replace('/')} style={styles.primary}><ThemedText style={styles.primaryText}>Continue on Home</ThemedText></Pressable>
       {job?.stage === 'course_needed' ? <Pressable accessibilityRole="button" accessibilityLabel="Choose course" onPress={() => router.push({ pathname: '/course-resolution' as never, params: { jobId: job.id } } as never)} style={styles.secondary}><ThemedText style={styles.secondaryText}>Choose course</ThemedText></Pressable> : null}
-      {job?.stage === 'retryable_failed' ? <Pressable accessibilityRole="button" accessibilityLabel="Retry processing" onPress={retry} style={styles.secondary}><ThemedText style={styles.secondaryText}>Retry</ThemedText></Pressable> : null}
+      {job?.stage === 'retryable_failed' && !overloaded ? <Pressable accessibilityRole="button" accessibilityLabel="Retry processing" onPress={retry} style={styles.secondary}><ThemedText style={styles.secondaryText}>Retry</ThemedText></Pressable> : null}
       {job?.stage === 'completed' && job.lectureId ? <Pressable accessibilityRole="button" accessibilityLabel="Open notes" onPress={() => router.replace({ pathname: '/lecture/[id]', params: { id: job.lectureId! } })} style={styles.secondary}><ThemedText style={styles.secondaryText}>Open notes</ThemedText></Pressable> : null}
       {job && !['completed', 'terminal_failed'].includes(job.stage) ? <Pressable accessibilityRole="button" accessibilityLabel="Notify me when processing changes" disabled={notifying} onPress={enableNotifications} style={styles.link}><ThemedText style={styles.linkText}>{notifying ? 'Opening notification settings…' : 'Notify me when ready'}</ThemedText></Pressable> : null}
     </Screen>

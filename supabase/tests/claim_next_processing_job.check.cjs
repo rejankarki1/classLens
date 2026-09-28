@@ -194,9 +194,53 @@ function psqlAsync(sql) {
   ).trim();
   assert.equal(resumedGlobal, `${backingOffId}|analyzing||${globalRetryToken}`);
 
+  const busyNotDueId = crypto.randomUUID();
+  const busyDueId = crypto.randomUUID();
+  const busyExpiredId = crypto.randomUUID();
+  psql(`
+    insert into public.processing_jobs
+      (id, owner_id, capture_session_id, media_type, stage, resume_stage, total_count, uploaded_count,
+       retry_count, overload_retry_count, overload_started_at, next_attempt_at, last_error_code)
+    values
+      ('${busyNotDueId}', '${ownerId}', 'busy-not-due-${busyNotDueId}', 'photo', 'retryable_failed',
+       'analyzing', 1, 1, 0, 1, now() - interval '1 minute', now() + interval '1 minute', 'GEMINI_ALL_BUSY'),
+      ('${busyDueId}', '${ownerId}', 'busy-due-${busyDueId}', 'photo', 'retryable_failed',
+       'analyzing', 1, 1, 0, 3, now() - interval '20 minutes', now() - interval '1 second', 'GEMINI_ALL_BUSY'),
+      ('${busyExpiredId}', '${ownerId}', 'busy-expired-${busyExpiredId}', 'photo', 'retryable_failed',
+       'analyzing', 1, 1, 0, 8, now() - interval '121 minutes', now() - interval '1 minute', 'GEMINI_ALL_BUSY');
+  `);
+
+  const notDue = psql(
+    `select id from public.claim_processing_job_by_id(
+      '${busyNotDueId}'::uuid, '${ownerId}'::uuid, '${crypto.randomUUID()}'::uuid, 300);`,
+    { tuplesOnly: true },
+  ).trim();
+  assert.equal(notDue, '', 'capacity retry must respect next_attempt_at');
+
+  const busyToken = crypto.randomUUID();
+  const due = psql(
+    `select id, stage, retry_count, overload_retry_count from public.claim_processing_job_by_id(
+      '${busyDueId}'::uuid, '${ownerId}'::uuid, '${busyToken}'::uuid, 300);`,
+    { tuplesOnly: true },
+  ).trim();
+  assert.equal(due, `${busyDueId}|analyzing|0|3`, 'capacity retry must not consume retry_count');
+
+  const expired = psql(
+    `select id from public.claim_processing_job_by_id(
+      '${busyExpiredId}'::uuid, '${ownerId}'::uuid, '${crypto.randomUUID()}'::uuid, 300);`,
+    { tuplesOnly: true },
+  ).trim();
+  assert.equal(expired, '', 'two-hour capacity failure must not be reclaimed');
+  const expiredStage = psql(
+    `select stage from public.processing_jobs where id = '${busyExpiredId}';`,
+    { tuplesOnly: true },
+  ).trim();
+  assert.equal(expiredStage, 'terminal_failed', 'targeted claim must terminalize expired capacity retries');
+
   psql(`
     delete from public.processing_jobs where id in (
-      '${jobId}', '${targetedJobId}', '${uploadFailureId}', '${backingOffId}', '${cappedId}'
+      '${jobId}', '${targetedJobId}', '${uploadFailureId}', '${backingOffId}', '${cappedId}',
+      '${busyNotDueId}', '${busyDueId}', '${busyExpiredId}'
     );
     delete from auth.users where id in ('${ownerId}', '${otherOwnerId}');
   `);

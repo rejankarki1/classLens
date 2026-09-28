@@ -92,14 +92,36 @@ export function requireCallerAuthorization(request: Request): string {
   return authorization;
 }
 
-export function requestGemini(fetcher: typeof fetch, key: string, signal: AbortSignal, prompt: string, parts: unknown[], schema: unknown, maxOutputTokens: number) {
-  return fetcher('https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite:generateContent', {
+type GeminiGenerationOptions = {
+  model?: 'gemini-3.1-flash-lite' | 'gemma-4-26b-a4b-it' | 'gemini-3.5-flash-lite' | 'gemini-3-flash-preview' | 'gemini-3.8-flash';
+  temperature?: number;
+  thinkingLevel?: 'MINIMAL' | 'LOW' | 'MEDIUM' | 'HIGH';
+};
+
+export function requestGemini(
+  fetcher: typeof fetch,
+  key: string,
+  signal: AbortSignal,
+  prompt: string,
+  parts: unknown[],
+  schema: unknown,
+  maxOutputTokens: number,
+  options: GeminiGenerationOptions = {},
+) {
+  const model = options.model ?? 'gemini-3.1-flash-lite';
+  return fetcher(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
     method: 'POST', signal,
     headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key.trim() },
     body: JSON.stringify({
       systemInstruction: { parts: [{ text: prompt }] },
       contents: [{ role: 'user', parts }],
-      generationConfig: { maxOutputTokens, responseMimeType: 'application/json', responseJsonSchema: schema },
+      generationConfig: {
+        maxOutputTokens,
+        responseMimeType: 'application/json',
+        responseJsonSchema: schema,
+        ...(options.temperature === undefined ? {} : { temperature: options.temperature }),
+        ...(options.thinkingLevel === undefined ? {} : { thinkingConfig: { thinkingLevel: options.thinkingLevel } }),
+      },
     }),
   });
 }

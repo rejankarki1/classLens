@@ -60,7 +60,8 @@ function captureRows() {
 function jobRow(overrides = {}) {
   return {
     id: jobId, owner_id: ownerId, capture_session_id: sessionId, media_type: 'photo',
-    stage: 'analyzing', total_count: ids.length, capture_analysis_id: null, ...overrides,
+    stage: 'analyzing', total_count: ids.length, capture_analysis_id: null, retry_count: 0,
+    overload_retry_count: 0, overload_started_at: null, ...overrides,
   };
 }
 
@@ -79,6 +80,7 @@ function setup(overrides = {}) {
     jobPatches: [],
     fileCalls: 0,
     releasedLease: false,
+    geminiModels: [],
   };
   const fetcher = async (url, init = {}) => {
     calls.push({ url, init });
@@ -124,8 +126,24 @@ function setup(overrides = {}) {
     if (url.includes('/storage/v1/')) return new Response(new Uint8Array([1, 2, 3]), { headers: { 'content-type': 'image/jpeg' } });
     if (url.includes(':generateContent')) {
       state.geminiCalls += 1;
+      const body = JSON.parse(init.body);
+      const model = /\/models\/([^:]+):generateContent/.exec(url)?.[1];
+      state.geminiModels.push(model);
+      assert.equal(body.generationConfig.maxOutputTokens, 2048);
+      assert.equal(body.generationConfig.temperature, 0.2);
+      assert.ok(['gemini-3.1-flash-lite', 'gemma-4-26b-a4b-it', 'gemini-3.5-flash-lite', 'gemini-3-flash-preview', 'gemini-3.8-flash'].includes(model));
+      if (model === 'gemma-4-26b-a4b-it') assert.equal(body.generationConfig.thinkingConfig, undefined);
+      else assert.deepEqual(body.generationConfig.thinkingConfig, { thinkingLevel: 'MINIMAL' });
+      const providerStatus = overrides.providerStatuses?.[state.geminiCalls - 1];
+      if (providerStatus) return new Response('private provider detail', { status: providerStatus });
       if (overrides.providerFailure) return new Response('private provider detail', { status: 502 });
-      return json({ candidates: [{ finishReason: 'STOP', content: { parts: [{ text: JSON.stringify(analysis) }] } }] });
+      return json({
+        candidates: [{
+          finishReason: overrides.finishReason ?? 'STOP',
+          content: { parts: [{ text: JSON.stringify(analysis) }] },
+        }],
+        usageMetadata: { promptTokenCount: 321, candidatesTokenCount: 654, thoughtsTokenCount: 17 },
+      });
     }
     if (url.includes('/rest/v1/capture_analyses?on_conflict=') && init.method === 'POST') {
       const body = JSON.parse(init.body);
@@ -229,6 +247,13 @@ function request(bearer = 'user-token', body = { jobId }) {
   assert.equal(freshAnalysis.state.fileCalls, 1);
   assert.equal(freshAnalysis.state.jobPatches.at(-1).stage, 'filing');
   assert.equal(freshAnalysis.state.jobPatches.at(-1).course_id, courseId);
+  assert.ok(freshAnalysis.logs.some((entry) => entry.event === '[process-job] timing'
+    && entry.details.step === 'storage-download' && entry.details.photoCount === ids.length));
+  assert.ok(freshAnalysis.logs.some((entry) => entry.event === '[process-job] timing'
+    && entry.details.step === 'gemini-request' && entry.details.promptTokens === 321
+    && entry.details.outputTokens === 654 && entry.details.thinkingTokens === 17));
+  assert.ok(freshAnalysis.logs.some((entry) => entry.event === '[process-job] timing'
+    && entry.details.step === 'analysis-save'));
 
   const reuseByJob = setup({ job: jobRow({ capture_analysis_id: '55555555-5555-4555-8555-555555555555' }) });
   const reuseResponse = await reuseByJob.handler(request());
@@ -260,6 +285,54 @@ function request(bearer = 'user-token', body = { jobId }) {
   const providerFailedResponse = await providerFailed.handler(request());
   assert.equal(providerFailedResponse.status, 502);
   assert.equal(providerFailed.state.releasedLease, true, 'a failed claim must release the job lease for retry, not strand it');
+
+  const retryThenSuccess = setup({ providerStatuses: [503], config: { geminiRetryDelayScale: 0 } });
+  assert.equal((await retryThenSuccess.handler(request())).status, 200);
+  assert.deepEqual(retryThenSuccess.state.geminiModels, [
+    'gemini-3.1-flash-lite', 'gemini-3.1-flash-lite',
+  ]);
+  assert.deepEqual(retryThenSuccess.logs.filter((entry) => entry.event === '[process-job] gemini-attempt').map((entry) => entry.details.status), [503, 200]);
+
+  const fallbackSuccess = setup({ providerStatuses: [503, 503], config: { geminiRetryDelayScale: 0 } });
+  assert.equal((await fallbackSuccess.handler(request())).status, 200);
+  assert.deepEqual(fallbackSuccess.state.geminiModels, [
+    'gemini-3.1-flash-lite', 'gemini-3.1-flash-lite', 'gemma-4-26b-a4b-it',
+  ]);
+  const fallbackTiming = fallbackSuccess.logs.find((entry) => entry.event === '[process-job] timing' && entry.details.step === 'gemini-request');
+  assert.equal(fallbackTiming.details.model, 'gemma-4-26b-a4b-it');
+  assert.equal(fallbackTiming.details.finishReason, 'STOP');
+
+  for (const status of [400, 401, 403]) {
+    const noRetry = setup({ providerStatuses: [status], config: { geminiRetryDelayScale: 0 } });
+    await noRetry.handler(request());
+    assert.equal(noRetry.state.geminiCalls, 1, `Gemini HTTP ${status} must not be retried`);
+  }
+
+  const quotaFallback = setup({ providerStatuses: [429], config: { geminiRetryDelayScale: 0 } });
+  assert.equal((await quotaFallback.handler(request())).status, 200);
+  assert.equal(quotaFallback.state.geminiCalls, 2, 'Gemini HTTP 429 must move directly to the next model');
+  assert.deepEqual(quotaFallback.state.geminiModels, ['gemini-3.1-flash-lite', 'gemma-4-26b-a4b-it']);
+
+  const allBusy = setup({ providerStatuses: [503, 503, 503, 503, 503, 503], config: { geminiRetryDelayScale: 0 } });
+  const allBusyResponse = await allBusy.handler(request());
+  assert.equal(allBusyResponse.status, 200);
+  assert.equal((await allBusyResponse.json()).status, 'in_progress');
+  assert.deepEqual(allBusy.state.geminiModels, [
+    'gemini-3.1-flash-lite', 'gemini-3.1-flash-lite', 'gemma-4-26b-a4b-it',
+    'gemini-3.5-flash-lite', 'gemini-3-flash-preview', 'gemini-3.8-flash',
+  ]);
+  const busyPatch = allBusy.state.jobPatches.at(-1);
+  assert.equal(busyPatch.stage, 'retryable_failed');
+  assert.equal(busyPatch.last_error_code, 'GEMINI_ALL_BUSY');
+  assert.equal(busyPatch.overload_retry_count, 1);
+  assert.equal('retry_count' in busyPatch, false, 'capacity failures must not increment the real failure cap');
+
+  const truncated = setup({ finishReason: 'MAX_TOKENS' });
+  const truncatedResponse = await truncated.handler(request());
+  assert.equal(truncatedResponse.status, 502);
+  assert.equal((await truncatedResponse.json()).error.code, 'GEMINI_TRUNCATED');
+  assert.equal(truncated.state.saved, false, 'a truncated response must never be saved');
+  assert.equal(truncated.state.releasedLease, true, 'a truncated response must release the lease for retry');
 
   console.log('PASS: claim/reuse-or-run analysis/match/idempotent filing/status update, scoped by owner_id/job_id, no real Gemini calls.');
 })().catch((error) => { console.error(error); process.exitCode = 1; });

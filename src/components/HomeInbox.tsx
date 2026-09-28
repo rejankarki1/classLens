@@ -19,6 +19,7 @@ import { getActiveProcessingJobs, getInboxEvents, onProcessingJobsChange } from 
 
 function calmStatus(jobs: ProcessingJob[]): string {
   if (jobs.length > 1) return `Processing ${jobs.length} lectures…`;
+  if (jobs[0]?.lastErrorCode === 'GEMINI_ALL_BUSY') return 'Your notes will be ready soon';
   const stage = jobs[0]?.stage;
   if (stage === 'filing') return 'Finishing your notebook…';
   if (stage === 'analyzing') return 'Reading your lecture…';

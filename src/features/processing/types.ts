@@ -26,6 +26,9 @@ export type ProcessingJob = {
   uploadedCount: number;
   totalCount: number;
   retryCount: number;
+  overloadRetryCount: number;
+  overloadStartedAt: string | null;
+  nextAttemptAt: string | null;
   lastErrorCode: string | null;
   lastErrorMessage: string | null;
   courseId: string | null;

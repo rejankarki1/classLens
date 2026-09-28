@@ -15,19 +15,22 @@ import { stageCaptureSession } from './processingLocal';
 type JobRow = {
   id: string; owner_id: string; capture_session_id: string; media_type: ProcessingJob['mediaType'];
   stage: ProcessingJobStage; resume_stage: ResumableProcessingStage | null; uploaded_count: number;
-  total_count: number; retry_count: number; last_error_code: string | null; last_error_message: string | null;
+  total_count: number; retry_count: number; overload_retry_count: number; overload_started_at: string | null;
+  next_attempt_at: string | null; last_error_code: string | null; last_error_message: string | null;
   course_id: string | null; suggested_course_id: string | null; suggested_course_label: string | null;
   match_confidence: number | null; match_explanation: string | null; capture_analysis_id: string | null;
   lecture_id: string | null; created_at: string; updated_at: string; completed_at: string | null;
 };
 
-export const processingJobColumns = 'id, owner_id, capture_session_id, media_type, stage, resume_stage, uploaded_count, total_count, retry_count, last_error_code, last_error_message, course_id, suggested_course_id, suggested_course_label, match_confidence, match_explanation, capture_analysis_id, lecture_id, created_at, updated_at, completed_at';
+export const processingJobColumns = 'id, owner_id, capture_session_id, media_type, stage, resume_stage, uploaded_count, total_count, retry_count, overload_retry_count, overload_started_at, next_attempt_at, last_error_code, last_error_message, course_id, suggested_course_id, suggested_course_label, match_confidence, match_explanation, capture_analysis_id, lecture_id, created_at, updated_at, completed_at';
 
 function fromRow(row: JobRow): ProcessingJob {
   return {
     id: row.id, ownerId: row.owner_id, captureSessionId: row.capture_session_id, mediaType: row.media_type,
     stage: row.stage, resumeStage: row.resume_stage, uploadedCount: row.uploaded_count, totalCount: row.total_count,
-    retryCount: row.retry_count, lastErrorCode: row.last_error_code, lastErrorMessage: row.last_error_message,
+    retryCount: row.retry_count, overloadRetryCount: row.overload_retry_count,
+    overloadStartedAt: row.overload_started_at, nextAttemptAt: row.next_attempt_at,
+    lastErrorCode: row.last_error_code, lastErrorMessage: row.last_error_message,
     courseId: row.course_id, suggestedCourseId: row.suggested_course_id, suggestedCourseLabel: row.suggested_course_label,
     matchConfidence: row.match_confidence, matchExplanation: row.match_explanation,
     captureAnalysisId: row.capture_analysis_id, lectureId: row.lecture_id,

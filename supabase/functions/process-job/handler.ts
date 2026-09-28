@@ -14,6 +14,15 @@ import { parseCaptureAnalysis } from '../../../src/lib/captureAnalysis.ts';
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const defaultInlineRequestLimit = 18 * 1024 * 1024;
 const defaultLeaseSeconds = 300;
+const primaryGeminiModel = 'gemini-3.1-flash-lite' as const;
+const geminiModelChain = [
+  { model: primaryGeminiModel, thinking: 'level' },
+  { model: 'gemma-4-26b-a4b-it', thinking: 'none' },
+  { model: 'gemini-3.5-flash-lite', thinking: 'level' },
+  { model: 'gemini-3-flash-preview', thinking: 'level' },
+  { model: 'gemini-3.8-flash', thinking: 'level' },
+] as const;
+type GeminiModel = typeof geminiModelChain[number]['model'];
 
 type Config = {
   supabaseUrl: string;
@@ -23,6 +32,7 @@ type Config = {
   cronSecret?: string;
   leaseSeconds?: number;
   maxInlineRequestBytes?: number;
+  geminiRetryDelayScale?: number;
 };
 
 function timingSafeEqual(a: string, b: string): boolean {
@@ -43,6 +53,8 @@ type JobRow = {
   capture_analysis_id: string | null;
   course_id: string | null;
   retry_count: number;
+  overload_retry_count: number;
+  overload_started_at: string | null;
 };
 type CaptureRow = {
   id: string;
@@ -107,6 +119,21 @@ function geminiHttpCategory(status: number) {
   if (status === 429) return 'quota';
   if (status >= 500) return 'provider-unavailable';
   return 'unexpected-status';
+}
+
+function waitForRetry(signal: AbortSignal, delayMs: number): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal.aborted) return reject(new DOMException('Aborted', 'AbortError'));
+    const timer = setTimeout(() => {
+      signal.removeEventListener('abort', onAbort);
+      resolve();
+    }, delayMs);
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(new DOMException('Aborted', 'AbortError'));
+    };
+    signal.addEventListener('abort', onAbort, { once: true });
+  });
 }
 
 async function uploadGeminiFile(fetcher: typeof fetch, key: string, signal: AbortSignal, capture: LoadedCapture, logger: Logger) {
@@ -257,6 +284,31 @@ async function releaseLease(
   }
 }
 
+async function releaseBusyLease(
+  fetcher: typeof fetch, origin: string, headers: Record<string, string>, job: JobRow,
+  runnerToken: string, resumeStage: WorkerResumableStage, logger: Logger,
+) {
+  const now = new Date();
+  const startedAt = job.overload_started_at ? new Date(job.overload_started_at) : now;
+  const terminal = now.getTime() - startedAt.getTime() >= 2 * 60 * 60 * 1000;
+  const nextCount = (job.overload_retry_count ?? 0) + 1;
+  const delayMinutes = nextCount === 1 ? 2 : nextCount === 2 ? 5 : nextCount === 3 ? 10 : 15;
+  const body = terminal
+    ? { stage: 'terminal_failed', resume_stage: null, last_error_code: 'GEMINI_ALL_BUSY',
+      last_error_message: 'Your notes could not be prepared yet.', runner_token: null, lease_expires_at: null, updated_at: now.toISOString() }
+    : { stage: 'retryable_failed', resume_stage: resumeStage, last_error_code: 'GEMINI_ALL_BUSY',
+      last_error_message: 'Your notes will be ready soon.', overload_retry_count: nextCount,
+      overload_started_at: startedAt.toISOString(), next_attempt_at: new Date(now.getTime() + delayMinutes * 60_000).toISOString(),
+      runner_token: null, lease_expires_at: null, updated_at: now.toISOString() };
+  const response = await rest(fetcher, `${origin}/rest/v1/processing_jobs?id=eq.${job.id}&runner_token=eq.${runnerToken}`,
+    headers, new AbortController().signal, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  if (!response.ok) {
+    log(logger, 'error', 'busy-lease-release-failed', { status: response.status });
+    throw new Failure(502, 'DATABASE', 'Could not schedule the lecture analysis retry.');
+  }
+  return terminal ? 'terminal_failed' : 'retryable_failed';
+}
+
 function courseRow(membership: MembershipRow): CourseRow | null {
   const value = membership.courses;
   const course = Array.isArray(value) ? value[0] : value;
@@ -268,6 +320,7 @@ export function createHandler(config: Config, fetcher: typeof fetch = fetch, log
     if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: cors });
     if (request.method !== 'POST') return json({ error: { code: 'METHOD', message: 'Use POST.' } }, 405);
     const controller = new AbortController();
+    const workerDeadlineAt = Date.now() + 90_000;
     const timer = setTimeout(() => controller.abort(), 90_000);
     let statusContext: { origin: string; headers: Record<string, string>; ids: string[]; attemptId: string } | null = null;
     let leaseContext: { origin: string; headers: Record<string, string>; jobId: string; runnerToken: string; retryCount: number; resumeStage: WorkerResumableStage } | null = null;
@@ -409,11 +462,18 @@ export function createHandler(config: Config, fetcher: typeof fetch = fetch, log
             statusContext = { origin, headers, ids: captureIds, attemptId };
 
             stage = 'image-retrieval';
+            const storageDownloadStartedAt = Date.now();
             const loadedCaptures: LoadedCapture[] = [];
             for (const capture of captureRows) {
               const { mime, image } = await loadCapturePhoto(origin, headers, capture.owner_id, capture.id, capture.storage_path, controller.signal, fetcher);
               loadedCaptures.push({ ...capture, mime, image });
             }
+            log(logger, 'log', 'timing', {
+              step: 'storage-download',
+              durationMs: Date.now() - storageDownloadStartedAt,
+              photoCount: loadedCaptures.length,
+              byteCount: loadedCaptures.reduce((total, capture) => total + capture.image.byteLength, 0),
+            });
 
             const parts: unknown[] = [{ text: `Session ID: ${job.capture_session_id}\nAnalyze ${loadedCaptures.length} pages in this exact order.` }];
             const inlineLimit = config.maxInlineRequestBytes ?? defaultInlineRequestLimit;
@@ -434,29 +494,106 @@ export function createHandler(config: Config, fetcher: typeof fetch = fetch, log
             }
 
             stage = 'gemini-request';
-            let provider: Response;
-            try {
-              provider = await requestGemini(fetcher, config.geminiKey, controller.signal, prompt, parts, schema, 16_384);
-            } catch {
-              throw new Failure(502, 'GEMINI_NETWORK', 'The analysis provider could not be reached. Try again.');
-            }
-            const providerCategory = geminiHttpCategory(provider.status);
-            log(logger, provider.ok ? 'log' : 'error', 'gemini-http', { status: provider.status, category: provider.ok ? 'ok' : providerCategory });
-            if (provider.status === 429) throw new Failure(429, 'QUOTA', 'Analysis quota reached. Try again later.');
-            if (!provider.ok) {
+            const geminiStartedAt = Date.now();
+            let result: Record<string, any> | null = null;
+            let selectedModel: GeminiModel = primaryGeminiModel;
+            let geminiAttempt = 0;
+            const retryDelayScale = config.geminiRetryDelayScale ?? 1;
+            const attempts = [geminiModelChain[0], geminiModelChain[0], ...geminiModelChain.slice(1)];
+            for (let index = 0; index < attempts.length; index++) {
+              if (workerDeadlineAt - Date.now() < 1_000) break;
+              const candidateModel = attempts[index];
+              selectedModel = candidateModel.model;
+              geminiAttempt += 1;
+              const attemptStartedAt = Date.now();
+              const attemptController = new AbortController();
+              let attemptTimedOut = false;
+              const forwardAbort = () => attemptController.abort();
+              controller.signal.addEventListener('abort', forwardAbort, { once: true });
+              const attemptTimer = setTimeout(() => { attemptTimedOut = true; attemptController.abort(); }, 25_000);
+              let provider: Response;
+              try {
+                provider = await requestGemini(fetcher, config.geminiKey, attemptController.signal, prompt, parts, schema, 2_048, {
+                  model: selectedModel,
+                  temperature: 0.2,
+                  ...(candidateModel.thinking === 'level' ? { thinkingLevel: 'MINIMAL' as const } : {}),
+                });
+              } catch {
+                clearTimeout(attemptTimer);
+                controller.signal.removeEventListener('abort', forwardAbort);
+                if (controller.signal.aborted) {
+                  log(logger, 'error', 'gemini-attempt', {
+                    model: selectedModel, attempt: geminiAttempt, status: 'worker-timeout',
+                    errorMessage: 'Worker deadline reached during Gemini attempt.', durationMs: Date.now() - attemptStartedAt,
+                  });
+                  break;
+                }
+                if (!attemptTimedOut) throw new Failure(502, 'GEMINI_NETWORK', 'The analysis provider could not be reached. Try again.');
+                log(logger, 'error', 'gemini-attempt', {
+                  model: selectedModel, attempt: geminiAttempt, status: 'timeout',
+                  errorMessage: 'Gemini attempt timed out.', durationMs: Date.now() - attemptStartedAt,
+                });
+                continue;
+              }
+              clearTimeout(attemptTimer);
+              controller.signal.removeEventListener('abort', forwardAbort);
+              let decoded: Record<string, any> | null = null;
+              try { decoded = await provider.json(); } catch { /* handled below */ }
+              const providerError = decoded?.error && typeof decoded.error === 'object' ? decoded.error : {};
+              const errorMessage = typeof providerError.message === 'string' ? providerError.message.slice(0, 500) : null;
+              log(logger, provider.ok ? 'log' : 'error', 'gemini-attempt', {
+                model: selectedModel, attempt: geminiAttempt, status: provider.status,
+                errorMessage, durationMs: Date.now() - attemptStartedAt,
+              });
+              if (provider.ok) {
+                if (!decoded) throw new Failure(502, 'GEMINI_RESPONSE', 'The analysis provider returned an unreadable response. Try again.');
+                result = decoded;
+                break;
+              }
+              if (provider.status === 503 || provider.status === 429) {
+                if (index === 0 && provider.status === 503) {
+                  await waitForRetry(controller.signal, (750 + Math.random() * 500) * retryDelayScale);
+                } else if (index === 0 && provider.status === 429) {
+                  index += 1;
+                }
+                continue;
+              }
+              const providerCategory = geminiHttpCategory(provider.status);
+              log(logger, 'error', 'gemini-http', { status: provider.status, category: providerCategory });
               const message = providerCategory === 'request-rejected' ? 'The analysis provider rejected the lecture request. Try again.'
                 : providerCategory === 'provider-auth' ? 'The analysis provider is not configured correctly.'
                 : 'The analysis provider is temporarily unavailable. Try again.';
-              throw new Failure(502, `GEMINI_${providerCategory.replace('-', '_').toUpperCase()}`, message);
+              throw new Failure(provider.status === 429 ? 429 : 502, `GEMINI_${providerCategory.replace('-', '_').toUpperCase()}`, message);
+            }
+            const geminiDurationMs = Date.now() - geminiStartedAt;
+            if (!result) {
+              if (statusContext) { await releaseClaim(fetcher, statusContext, logger); statusContext = null; }
+              const busyStage = await releaseBusyLease(fetcher, origin, headers, job, runnerToken, leaseContext!.resumeStage, logger);
+              leaseContext = null;
+              log(logger, 'log', 'gemini-all-busy', { jobId: job.id, durationMs: geminiDurationMs, attemptCount: geminiAttempt });
+              return json({ claimed: true, jobId: job.id, stage: busyStage, status: busyStage === 'retryable_failed' ? 'in_progress' : 'unavailable' });
             }
 
             stage = 'analysis-parsing';
-            let result: Record<string, any>;
-            try { result = await provider.json(); } catch {
-              throw new Failure(502, 'GEMINI_RESPONSE', 'The analysis provider returned an unreadable response. Try again.');
-            }
+            const usage = result.usageMetadata && typeof result.usageMetadata === 'object'
+              ? result.usageMetadata as Record<string, unknown>
+              : {};
             const candidate = result.candidates?.[0];
+            log(logger, 'log', 'timing', {
+              step: 'gemini-request',
+              durationMs: geminiDurationMs,
+              outcome: 'response',
+              model: selectedModel,
+              attemptCount: geminiAttempt,
+              finishReason: typeof candidate?.finishReason === 'string' ? candidate.finishReason : null,
+              promptTokens: typeof usage.promptTokenCount === 'number' ? usage.promptTokenCount : null,
+              outputTokens: typeof usage.candidatesTokenCount === 'number' ? usage.candidatesTokenCount : null,
+              thinkingTokens: typeof usage.thoughtsTokenCount === 'number' ? usage.thoughtsTokenCount : null,
+            });
             if (result.promptFeedback?.blockReason) throw new Failure(422, 'ANALYSIS_BLOCKED', 'The lecture photos could not be analyzed safely.');
+            if (candidate?.finishReason === 'MAX_TOKENS') {
+              throw new Failure(502, 'GEMINI_TRUNCATED', 'The lecture analysis was truncated. Try again.');
+            }
             if (candidate?.finishReason !== 'STOP') throw new Failure(502, 'GEMINI_INCOMPLETE', 'The lecture analysis was incomplete. Try again.');
             const responseParts: unknown = candidate.content?.parts;
             if (!Array.isArray(responseParts)) throw new Failure(502, 'GEMINI_RESPONSE', 'The analysis provider returned no lecture analysis. Try again.');
@@ -472,6 +609,7 @@ export function createHandler(config: Config, fetcher: typeof fetch = fetch, log
             if (parsedForSession.sessionId !== job.capture_session_id) throw new Failure(502, 'INVALID_ANALYSIS_SESSION', 'The lecture analysis did not match this capture session.');
 
             stage = 'analysis-save';
+            const analysisSaveStartedAt = Date.now();
             const saved = await rest(fetcher,
               `${origin}/rest/v1/capture_analyses?on_conflict=owner_id,capture_session_id`, headers, controller.signal, {
                 method: 'POST',
@@ -486,6 +624,21 @@ export function createHandler(config: Config, fetcher: typeof fetch = fetch, log
             if (!storedAnalysis) throw new Failure(502, 'ANALYSIS_SAVE', 'Could not verify the saved lecture analysis. Try again.');
             analysisId = storedAnalysis.id;
             rawAnalysis = storedAnalysis.analysis;
+            if ((job.overload_retry_count ?? 0) > 0 || job.overload_started_at) {
+              const cleared = await rest(fetcher,
+                `${origin}/rest/v1/processing_jobs?id=eq.${job.id}&runner_token=eq.${runnerToken}`,
+                headers, controller.signal, {
+                  method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    overload_retry_count: 0, overload_started_at: null, next_attempt_at: null,
+                    last_error_code: null, last_error_message: null, updated_at: new Date().toISOString(),
+                  }),
+                });
+              if (!cleared.ok) throw new Failure(502, 'DATABASE', 'Could not clear the analysis retry schedule.');
+            }
+            log(logger, 'log', 'timing', {
+              step: 'analysis-save', durationMs: Date.now() - analysisSaveStartedAt,
+            });
 
             stage = 'finalization';
             const finalized = await rest(fetcher,
