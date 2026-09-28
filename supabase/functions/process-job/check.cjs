@@ -131,7 +131,7 @@ function setup(overrides = {}) {
       state.geminiModels.push(model);
       assert.equal(body.generationConfig.maxOutputTokens, 2048);
       assert.equal(body.generationConfig.temperature, 0.2);
-      assert.ok(['gemini-3.1-flash-lite', 'gemma-4-26b-a4b-it', 'gemini-3.5-flash-lite', 'gemini-3-flash-preview', 'gemini-3.8-flash'].includes(model));
+      assert.ok(['gemini-3.1-flash-lite', 'gemma-4-26b-a4b-it', 'gemini-3.5-flash-lite', 'gemini-3-flash-preview'].includes(model));
       if (model === 'gemma-4-26b-a4b-it') assert.equal(body.generationConfig.thinkingConfig, undefined);
       else assert.deepEqual(body.generationConfig.thinkingConfig, { thinkingLevel: 'MINIMAL' });
       const providerStatus = overrides.providerStatuses?.[state.geminiCalls - 1];
@@ -319,7 +319,7 @@ function request(bearer = 'user-token', body = { jobId }) {
   assert.equal((await allBusyResponse.json()).status, 'in_progress');
   assert.deepEqual(allBusy.state.geminiModels, [
     'gemini-3.1-flash-lite', 'gemini-3.1-flash-lite', 'gemma-4-26b-a4b-it',
-    'gemini-3.5-flash-lite', 'gemini-3-flash-preview', 'gemini-3.8-flash',
+    'gemini-3.5-flash-lite', 'gemini-3-flash-preview',
   ]);
   const busyPatch = allBusy.state.jobPatches.at(-1);
   assert.equal(busyPatch.stage, 'retryable_failed');
