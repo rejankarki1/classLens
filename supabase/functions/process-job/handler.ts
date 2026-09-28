@@ -227,9 +227,17 @@ async function releaseClaim(
 // orchestrator's own MAX_PROCESSING_FAILURES (src/features/processing/stateMachine.ts).
 const maxProcessingFailures = 3;
 
+// Only these two are ever valid here: the worker only ever claims a job at
+// 'analyzing' (fresh from 'uploaded', or reclaimed mid-analysis) or 'filing'
+// (reclaimed after a course was already decided) -- 'queued'/'uploading'
+// are phone-only. The table's resume_stage check only allows these plus
+// 'queued'/'uploading' anyway, so this must track the job's real recovery
+// point rather than a fixed guess.
+type WorkerResumableStage = 'analyzing' | 'filing';
+
 async function releaseLease(
   fetcher: typeof fetch, origin: string, headers: Record<string, string>,
-  jobId: string, runnerToken: string, currentRetryCount: number, logger: Logger,
+  jobId: string, runnerToken: string, currentRetryCount: number, resumeStage: WorkerResumableStage, logger: Logger,
 ) {
   const nextRetryCount = Math.min(maxProcessingFailures, currentRetryCount + 1);
   const terminal = currentRetryCount + 1 >= maxProcessingFailures;
@@ -238,7 +246,7 @@ async function releaseLease(
       method: 'PATCH', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(terminal
         ? { stage: 'terminal_failed', resume_stage: null, retry_count: nextRetryCount, runner_token: null, lease_expires_at: null, updated_at: new Date().toISOString() }
-        : { stage: 'retryable_failed', resume_stage: 'analyzing', retry_count: nextRetryCount, runner_token: null, lease_expires_at: null, updated_at: new Date().toISOString() }),
+        : { stage: 'retryable_failed', resume_stage: resumeStage, retry_count: nextRetryCount, runner_token: null, lease_expires_at: null, updated_at: new Date().toISOString() }),
     });
     if (!response.ok) {
       const detail = await response.text().catch(() => '');
@@ -262,7 +270,7 @@ export function createHandler(config: Config, fetcher: typeof fetch = fetch, log
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 90_000);
     let statusContext: { origin: string; headers: Record<string, string>; ids: string[]; attemptId: string } | null = null;
-    let leaseContext: { origin: string; headers: Record<string, string>; jobId: string; runnerToken: string; retryCount: number } | null = null;
+    let leaseContext: { origin: string; headers: Record<string, string>; jobId: string; runnerToken: string; retryCount: number; resumeStage: WorkerResumableStage } | null = null;
     const geminiFiles: GeminiFile[] = [];
     let stage = 'request';
     try {
@@ -300,7 +308,7 @@ export function createHandler(config: Config, fetcher: typeof fetch = fetch, log
       if (!Array.isArray(claimedRows)) throw new Failure(502, 'DATABASE', 'Invalid claim response.');
       if (!claimedRows.length) return json({ claimed: false });
       const job = claimedRows[0] as JobRow;
-      leaseContext = { origin, headers, jobId: job.id, runnerToken, retryCount: job.retry_count };
+      leaseContext = { origin, headers, jobId: job.id, runnerToken, retryCount: job.retry_count, resumeStage: job.stage === 'filing' ? 'filing' : 'analyzing' };
       log(logger, 'log', 'claimed', { jobId: job.id, ownerId: job.owner_id });
 
       if (job.media_type !== 'photo') {
@@ -510,6 +518,7 @@ export function createHandler(config: Config, fetcher: typeof fetch = fetch, log
       }
 
       stage = 'filing';
+      if (leaseContext) leaseContext.resumeStage = 'filing';
       const fileResponse = await rest(fetcher, `${origin}/rest/v1/rpc/worker_file_processing_job`, headers, controller.signal, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ p_job_id: job.id, p_runner_token: runnerToken }),
@@ -525,7 +534,7 @@ export function createHandler(config: Config, fetcher: typeof fetch = fetch, log
       return json({ claimed: true, jobId: job.id, stage: 'completed', lectureId });
     } catch (error) {
       if (statusContext) await releaseClaim(fetcher, statusContext, logger);
-      if (leaseContext) await releaseLease(fetcher, leaseContext.origin, leaseContext.headers, leaseContext.jobId, leaseContext.runnerToken, leaseContext.retryCount, logger);
+      if (leaseContext) await releaseLease(fetcher, leaseContext.origin, leaseContext.headers, leaseContext.jobId, leaseContext.runnerToken, leaseContext.retryCount, leaseContext.resumeStage, logger);
       const failure = controller.signal.aborted ? new Failure(504, 'TIMEOUT', 'Worker processing timed out.')
         : error instanceof Failure ? error : new Failure(502, 'UPSTREAM', 'Worker processing failed.');
       log(logger, 'error', 'request-failed', { stage, code: failure.code, status: failure.status });
