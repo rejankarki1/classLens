@@ -47,6 +47,13 @@ async function client() {
   return supabase;
 }
 
+/** Preserves the Postgres/PostgREST SQLSTATE so callers can classify by
+ * structured code instead of scanning message text (which can collide with
+ * unrelated infrastructure text, e.g. a trigger's own rejection message). */
+function dbError(message: string, code?: string | null): Error {
+  return Object.assign(new Error(message), { code: code ?? null });
+}
+
 export async function enqueuePhotoProcessingJob(session: CaptureSession): Promise<ProcessingJob> {
   const ownerId = await getCurrentUserId();
   if (!ownerId) throw new Error('Sign in before processing lecture photos.');
@@ -135,8 +142,8 @@ export async function updateProcessingJob(id: string, runnerToken: string | null
   let query = supabase.from('processing_jobs').update({ ...values, updated_at: new Date().toISOString() }).eq('id', id);
   if (runnerToken) query = query.eq('runner_token', runnerToken);
   const { data, error } = await query.select(processingJobColumns).returns<JobRow[]>().maybeSingle();
-  if (error) throw new Error(`Could not update processing job: ${error.message}`);
-  if (!data) throw new Error('Processing job lease was lost.');
+  if (error) throw dbError(`Could not update processing job: ${error.message}`, error.code);
+  if (!data) throw dbError('Processing job lease was lost.');
   notifyProcessingJobsChanged();
   return fromRow(data);
 }
@@ -144,7 +151,7 @@ export async function updateProcessingJob(id: string, runnerToken: string | null
 export async function claimProcessingJob(id: string, token: string): Promise<ProcessingJob | null> {
   const supabase = await client();
   const { data, error } = await supabase.rpc('claim_processing_job', { p_job_id: id, p_runner_token: token });
-  if (error) throw new Error(`Could not claim processing job: ${error.message}`);
+  if (error) throw dbError(`Could not claim processing job: ${error.message}`, error.code);
   const rows = data as unknown as JobRow[] | null;
   return rows?.[0] ? fromRow(rows[0]) : null;
 }
@@ -194,7 +201,7 @@ export async function getJobCaptureIds(jobId: string): Promise<string[]> {
 export async function fileProcessingJob(id: string, runnerToken: string): Promise<string> {
   const supabase = await client();
   const { data, error } = await supabase.rpc('file_processing_job', { p_job_id: id, p_runner_token: runnerToken });
-  if (error || typeof data !== 'string') throw new Error(`Could not file the lecture notebook: ${error?.message ?? 'No lecture ID returned.'}`);
+  if (error || typeof data !== 'string') throw dbError(`Could not file the lecture notebook: ${error?.message ?? 'No lecture ID returned.'}`, error?.code);
   notifyProcessingJobsChanged();
   return data;
 }

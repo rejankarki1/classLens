@@ -172,8 +172,8 @@ export default function RootLayout() {
     void Notifications.getLastNotificationResponseAsync().then((event) => {
       const jobId = event?.notification.request.content.data?.jobId;
       if (typeof jobId === 'string') {
-        void openJob(jobId);
         void Notifications.clearLastNotificationResponseAsync();
+        void openJob(jobId);
       }
     });
     return () => response.remove();

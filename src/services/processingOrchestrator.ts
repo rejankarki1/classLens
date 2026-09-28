@@ -1,8 +1,11 @@
 import { randomUUID } from 'expo-crypto';
+import { File } from 'expo-file-system';
 
 import { MAX_PROCESSING_FAILURES } from '@/features/processing/stateMachine';
 import type { ProcessingJob, ProcessingTrigger, ResumableProcessingStage } from '@/types';
+import { logTiming } from '@/lib/timing';
 import { uploadCapture } from './materials';
+import { resizeForUpload } from './photoResize';
 import { getStagedCaptureSession, removeStagedPhoto } from './processingLocal';
 import {
   claimProcessingJob,
@@ -33,12 +36,24 @@ async function triggerWorker(): Promise<void> {
 
 type Failure = { code: string; message: string; retryable: boolean };
 
+// Structured Postgres/PostgREST SQLSTATE, when available (see processingJobs.ts's
+// dbError helper), takes priority over any text matching. A conflict/race
+// (check-constraint rejection, lease not held, not-found) must never read as a
+// permanent content failure -- only a genuine business-rule violation should.
+const CONFLICT_CODES = new Set(['23514', '55P03', 'P0002']);
+const TERMINAL_CODES = new Set(['42501', '22023']);
+
 function safeFailure(error: unknown): Failure {
-  const raw = error instanceof Error ? error.message : '';
-  const upper = raw.toUpperCase();
-  if (upper.includes('UNSUPPORTED') || upper.includes('BLOCKED') || upper.includes('OWNERSHIP') || upper.includes('INVALID')) {
+  const code = error && typeof error === 'object' && 'code' in error
+    ? String((error as { code: unknown }).code ?? '') : '';
+  if (TERMINAL_CODES.has(code)) {
     return { code: 'PROCESSING_TERMINAL', message: 'This lecture cannot be processed automatically.', retryable: false };
   }
+  if (CONFLICT_CODES.has(code)) {
+    return { code: 'PROCESSING_CONFLICT', message: 'Processing was interrupted. Your saved work can be retried.', retryable: true };
+  }
+  const raw = error instanceof Error ? error.message : '';
+  const upper = raw.toUpperCase();
   if (upper.includes('SIGNED OUT') || upper.includes('SIGN IN')) {
     return { code: 'AUTH_REQUIRED', message: 'Sign in again to continue processing.', retryable: true };
   }
@@ -87,21 +102,30 @@ export async function runProcessingJob(jobId: string, _trigger: ProcessingTrigge
       const existingIds = await getJobCaptureIds(job.id);
       if (!staged && existingIds.length !== job.totalCount) throw new Error('A staged lecture page is no longer available.');
       let uploadedCount = existingIds.length;
+      const uploadPhaseStart = Date.now();
       for (const photo of staged?.photos ?? []) {
-        await uploadCapture({
-          processingJobId: job.id,
-          sessionId: job.captureSessionId,
-          clientPhotoId: photo.id,
-          pageNumber: photo.pageNumber,
-          uri: photo.uri,
-          mimeType: photo.mimeType,
-          capturedAt: photo.capturedAt,
-          quality: photo.quality,
-        });
+        const resizeStart = Date.now();
+        const resized = await resizeForUpload(photo.uri, photo.width, photo.height);
+        logTiming('upload', `resize-page-${photo.pageNumber}`, Date.now() - resizeStart, { bytes: resized.byteSize });
+        try {
+          await uploadCapture({
+            processingJobId: job.id,
+            sessionId: job.captureSessionId,
+            clientPhotoId: photo.id,
+            pageNumber: photo.pageNumber,
+            uri: resized.uri,
+            mimeType: 'image/jpeg',
+            capturedAt: photo.capturedAt,
+            quality: photo.quality,
+          });
+        } finally {
+          try { new File(resized.uri).delete(); } catch { /* cache-only; OS may reclaim it */ }
+        }
         uploadedCount = (await getJobCaptureIds(job.id)).length;
         job = await updateProcessingJob(job.id, token, { stage: 'uploading', uploaded_count: uploadedCount });
         removeStagedPhoto(job.id, job.ownerId, photo.id);
       }
+      logTiming('upload', 'all-pages', Date.now() - uploadPhaseStart, { pages: job.totalCount });
       if (uploadedCount !== job.totalCount) throw new Error('Not every lecture page was uploaded.');
       job = await updateProcessingJob(job.id, token, {
         stage: 'uploaded', uploaded_count: uploadedCount, runner_token: null, lease_expires_at: null,

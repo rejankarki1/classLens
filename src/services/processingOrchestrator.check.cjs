@@ -30,10 +30,13 @@ function apply(values) {
 
 const mocks = {
   'expo-crypto': { randomUUID: () => 'runner-token' },
+  'expo-file-system': { File: class { constructor() {} delete() {} } },
   '@/features/processing/stateMachine': { MAX_PROCESSING_FAILURES: 3 },
   '@/types': {},
+  '@/lib/timing': { logTiming: () => {} },
   '@/lib/supabase': { supabase: { functions: { invoke: async () => { triggerCalls += 1; } } } },
   './materials': { uploadCapture: async (input) => { uploadCalls += 1; jobCaptureIds.push(`capture-${input.pageNumber}`); } },
+  './photoResize': { resizeForUpload: async (uri) => ({ uri, byteSize: 0 }) },
   './processingLocal': { getStagedCaptureSession: () => staged, removeStagedPhoto: () => {} },
   './processingNotifications': { notifyProcessingJob: async (_job, event) => { notifications.push(event); } },
   './processingJobs': {

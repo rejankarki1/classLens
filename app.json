@@ -11,8 +11,12 @@
       "bundleIdentifier": "com.rejan-karki1.classLens",
       "backgroundColor": "#234E3C",
       "infoPlist": {
-        "UIBackgroundModes": ["processing"],
-        "BGTaskSchedulerPermittedIdentifiers": ["com.expo.modules.backgroundtask.processing"]
+        "UIBackgroundModes": [
+          "processing"
+        ],
+        "BGTaskSchedulerPermittedIdentifiers": [
+          "com.expo.modules.backgroundtask.processing"
+        ]
       }
     },
     "android": {
@@ -27,7 +31,8 @@
         "android.permission.RECORD_AUDIO",
         "android.permission.MODIFY_AUDIO_SETTINGS",
         "android.permission.FOREGROUND_SERVICE",
-        "android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK"
+        "android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK",
+        "android.permission.CAMERA"
       ]
     },
     "web": {
@@ -69,6 +74,13 @@
       "backgroundColor": "#234E3C",
       "image": "./assets/images/classlens-splash.png",
       "resizeMode": "contain"
-    }
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "2913ffbd-549c-4edd-9e2b-4f11e4efb56b"
+      }
+    },
+    "owner": "rejan_karki1"
   }
 }

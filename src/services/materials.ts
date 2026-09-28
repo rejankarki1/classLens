@@ -1,5 +1,6 @@
 import type { CaptureRecord, CaptureUploadInput, Material, MaterialUploadInput } from '@/types';
 import { getDataMode } from '@/lib/dataMode';
+import { logTiming } from '@/lib/timing';
 
 const bucketName = 'lecture-materials';
 const maxPhotoBytes = 10 * 1024 * 1024;
@@ -192,24 +193,52 @@ export async function uploadCapture(input: CaptureUploadInput): Promise<CaptureR
     return capture;
   }
 
-  const { File } = await import('expo-file-system');
-  let bytes: ArrayBuffer;
+  const { File, UploadType } = await import('expo-file-system');
+  let file: InstanceType<typeof File>;
   try {
-    const file = new File(input.uri);
+    file = new File(input.uri);
     if (!file.exists) throw new Error('Captured photo no longer exists. Please retake it.');
     if (file.size <= 0) throw new Error('Captured photo is empty.');
     if (file.size > maxPhotoBytes) throw new Error('Photo must be 10 MiB or smaller.');
-    bytes = await file.arrayBuffer();
   } catch (error) {
     throw new Error(`Could not read captured photo: ${reason(error)}`);
   }
 
-  const bucket = supabase.storage.from(bucketName);
-  const upload = await bucket.upload(storagePath, bytes, { contentType: input.mimeType, upsert: false });
-  if (upload.error) {
+  const { data: sessionData } = await supabase.auth.getSession();
+  const accessToken = sessionData.session?.access_token;
+  if (!accessToken) throw new Error('Sign in again before uploading lecture photos.');
+  const origin = (process.env.EXPO_PUBLIC_SUPABASE_URL ?? '').trim().replace(/\/$/, '');
+  const publishableKey = (process.env.EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY ?? '').trim();
+  const uploadUrl = `${origin}/storage/v1/object/${bucketName}/${storagePath}`;
+
+  const uploadStart = Date.now();
+  let status: number;
+  let body: string;
+  try {
+    const result = await file.upload(uploadUrl, {
+      httpMethod: 'POST',
+      uploadType: UploadType.BINARY_CONTENT,
+      sessionType: 'background',
+      mimeType: input.mimeType,
+      headers: {
+        apikey: publishableKey, Authorization: `Bearer ${accessToken}`, 'x-upsert': 'false',
+        // BINARY_CONTENT's `mimeType` option does not reliably set the wire
+        // Content-Type header -- set it explicitly so the bucket's
+        // allowed_mime_types check sees the real image type, not
+        // application/octet-stream.
+        'Content-Type': input.mimeType,
+      },
+    });
+    status = result.status;
+    body = result.body;
+  } catch (error) {
+    throw new Error(`Photo ${input.pageNumber} upload failed: ${reason(error)}`);
+  }
+  logTiming('upload', `page-${input.pageNumber}`, Date.now() - uploadStart, { bytes: file.size });
+  if (status < 200 || status >= 300) {
     // A previous attempt may have uploaded the deterministic object but lost its response.
-    const recovered = await bucket.download(storagePath);
-    if (recovered.error || !recovered.data) throw new Error(`Photo ${input.pageNumber} upload failed: ${upload.error.message}`);
+    const recovered = await supabase.storage.from(bucketName).download(storagePath);
+    if (recovered.error || !recovered.data) throw new Error(`Photo ${input.pageNumber} upload failed: HTTP ${status} ${body.slice(0, 200)}`);
   }
 
   const insert = await supabase.from('captures').insert({
@@ -230,7 +259,7 @@ export async function uploadCapture(input: CaptureUploadInput): Promise<CaptureR
   if (!recovered.error && recovered.data) return mapCapture(recovered.data);
 
   let cleanup = 'The uploaded object could not be removed.';
-  const removed = await bucket.remove([storagePath]);
+  const removed = await supabase.storage.from(bucketName).remove([storagePath]);
   if (!removed.error && removed.data?.length) cleanup = 'The uploaded object was removed.';
   throw new Error(`Could not register photo ${input.pageNumber}: ${insert.error?.message ?? 'No capture row returned.'} ${cleanup}`);
 }

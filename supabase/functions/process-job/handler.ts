@@ -41,6 +41,8 @@ type JobRow = {
   stage: string;
   total_count: number;
   capture_analysis_id: string | null;
+  course_id: string | null;
+  retry_count: number;
 };
 type CaptureRow = {
   id: string;
@@ -221,14 +223,30 @@ async function releaseClaim(
   }
 }
 
-async function releaseLease(fetcher: typeof fetch, origin: string, headers: Record<string, string>, jobId: string, runnerToken: string) {
-  await rest(fetcher, `${origin}/rest/v1/processing_jobs?id=eq.${jobId}&runner_token=eq.${runnerToken}`, headers, new AbortController().signal, {
-    method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      stage: 'retryable_failed', resume_stage: 'analyzing', runner_token: null, lease_expires_at: null,
-      updated_at: new Date().toISOString(),
-    }),
-  }).catch(() => null);
+// Matches the table's `retry_count between 0 and 3` check and the phone
+// orchestrator's own MAX_PROCESSING_FAILURES (src/features/processing/stateMachine.ts).
+const maxProcessingFailures = 3;
+
+async function releaseLease(
+  fetcher: typeof fetch, origin: string, headers: Record<string, string>,
+  jobId: string, runnerToken: string, currentRetryCount: number, logger: Logger,
+) {
+  const nextRetryCount = Math.min(maxProcessingFailures, currentRetryCount + 1);
+  const terminal = currentRetryCount + 1 >= maxProcessingFailures;
+  try {
+    const response = await rest(fetcher, `${origin}/rest/v1/processing_jobs?id=eq.${jobId}&runner_token=eq.${runnerToken}`, headers, new AbortController().signal, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(terminal
+        ? { stage: 'terminal_failed', resume_stage: null, retry_count: nextRetryCount, runner_token: null, lease_expires_at: null, updated_at: new Date().toISOString() }
+        : { stage: 'retryable_failed', resume_stage: 'analyzing', retry_count: nextRetryCount, runner_token: null, lease_expires_at: null, updated_at: new Date().toISOString() }),
+    });
+    if (!response.ok) {
+      const detail = await response.text().catch(() => '');
+      log(logger, 'error', 'lease-release-failed', { status: response.status, detail: detail.slice(0, 300) });
+    }
+  } catch (error) {
+    log(logger, 'error', 'lease-release-failed', { category: 'network-error', message: error instanceof Error ? error.message : 'unknown' });
+  }
 }
 
 function courseRow(membership: MembershipRow): CourseRow | null {
@@ -244,7 +262,7 @@ export function createHandler(config: Config, fetcher: typeof fetch = fetch, log
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 90_000);
     let statusContext: { origin: string; headers: Record<string, string>; ids: string[]; attemptId: string } | null = null;
-    let leaseContext: { origin: string; headers: Record<string, string>; jobId: string; runnerToken: string } | null = null;
+    let leaseContext: { origin: string; headers: Record<string, string>; jobId: string; runnerToken: string; retryCount: number } | null = null;
     const geminiFiles: GeminiFile[] = [];
     let stage = 'request';
     try {
@@ -282,7 +300,7 @@ export function createHandler(config: Config, fetcher: typeof fetch = fetch, log
       if (!Array.isArray(claimedRows)) throw new Failure(502, 'DATABASE', 'Invalid claim response.');
       if (!claimedRows.length) return json({ claimed: false });
       const job = claimedRows[0] as JobRow;
-      leaseContext = { origin, headers, jobId: job.id, runnerToken };
+      leaseContext = { origin, headers, jobId: job.id, runnerToken, retryCount: job.retry_count };
       log(logger, 'log', 'claimed', { jobId: job.id, ownerId: job.owner_id });
 
       if (job.media_type !== 'photo') {
@@ -440,47 +458,66 @@ export function createHandler(config: Config, fetcher: typeof fetch = fetch, log
 
       const analysis = parseCaptureAnalysis(rawAnalysis, captureIds);
 
-      stage = 'match';
-      const membershipsResponse = await rest(fetcher,
-        `${origin}/rest/v1/course_memberships?user_id=eq.${job.owner_id}&select=course_id,courses(id,code,name,professor)`,
-        headers, controller.signal);
-      if (!membershipsResponse.ok) throw new Failure(502, 'DATABASE', 'Could not load enrolled courses.');
-      const memberships = (await membershipsResponse.json()) as MembershipRow[];
-      const courses = memberships.map(courseRow).filter((course): course is CourseRow => course !== null);
-      const match = matchEnrolledCourse(analysis, courses);
-      const common = {
-        capture_analysis_id: analysisId,
-        suggested_course_id: match.course?.id ?? null,
-        suggested_course_label: match.course ? `${match.course.code} · ${match.course.name}` : null,
-        match_confidence: match.confidence,
-        match_explanation: match.explanation,
-        updated_at: new Date().toISOString(),
-      };
+      // A job reclaimed after it already reached 'filing' (e.g. the user
+      // manually chose a course while this same low-confidence job was
+      // sitting at course_needed) already has its course_id decided --
+      // re-running the match here and trying to PATCH back to
+      // 'course_needed' is not a valid transition from 'filing' and the DB
+      // trigger correctly rejects it. Only match when nothing has decided
+      // the course yet.
+      if (!job.course_id) {
+        stage = 'match';
+        const membershipsResponse = await rest(fetcher,
+          `${origin}/rest/v1/course_memberships?user_id=eq.${job.owner_id}&select=course_id,courses(id,code,name,professor)`,
+          headers, controller.signal);
+        if (!membershipsResponse.ok) throw new Failure(502, 'DATABASE', 'Could not load enrolled courses.');
+        const memberships = (await membershipsResponse.json()) as MembershipRow[];
+        const courses = memberships.map(courseRow).filter((course): course is CourseRow => course !== null);
+        const match = matchEnrolledCourse(analysis, courses);
+        const common = {
+          capture_analysis_id: analysisId,
+          suggested_course_id: match.course?.id ?? null,
+          suggested_course_label: match.course ? `${match.course.code} · ${match.course.name}` : null,
+          match_confidence: match.confidence,
+          match_explanation: match.explanation,
+          updated_at: new Date().toISOString(),
+        };
 
-      if (!match.automatic || !match.course) {
+        if (!match.automatic || !match.course) {
+          stage = 'status-update';
+          const patched = await rest(fetcher, `${origin}/rest/v1/processing_jobs?id=eq.${job.id}&runner_token=eq.${runnerToken}`, headers, controller.signal, {
+            method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ...common, stage: 'course_needed', runner_token: null, lease_expires_at: null }),
+          });
+          if (!patched.ok) {
+            const detail = await patched.text().catch(() => '');
+            throw new Failure(502, 'DATABASE', `Could not update the processing job: HTTP ${patched.status} ${detail.slice(0, 300)}`);
+          }
+          leaseContext = null;
+          return json({ claimed: true, jobId: job.id, stage: 'course_needed' });
+        }
+
         stage = 'status-update';
         const patched = await rest(fetcher, `${origin}/rest/v1/processing_jobs?id=eq.${job.id}&runner_token=eq.${runnerToken}`, headers, controller.signal, {
           method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ ...common, stage: 'course_needed', runner_token: null, lease_expires_at: null }),
+          body: JSON.stringify({ ...common, stage: 'filing', course_id: match.course.id }),
         });
-        if (!patched.ok) throw new Failure(502, 'DATABASE', 'Could not update the processing job.');
-        leaseContext = null;
-        return json({ claimed: true, jobId: job.id, stage: 'course_needed' });
+        if (!patched.ok) {
+          const detail = await patched.text().catch(() => '');
+          throw new Failure(502, 'DATABASE', `Could not update the processing job: HTTP ${patched.status} ${detail.slice(0, 300)}`);
+        }
+        job.course_id = match.course.id;
       }
-
-      stage = 'status-update';
-      const patched = await rest(fetcher, `${origin}/rest/v1/processing_jobs?id=eq.${job.id}&runner_token=eq.${runnerToken}`, headers, controller.signal, {
-        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...common, stage: 'filing', course_id: match.course.id }),
-      });
-      if (!patched.ok) throw new Failure(502, 'DATABASE', 'Could not update the processing job.');
 
       stage = 'filing';
       const fileResponse = await rest(fetcher, `${origin}/rest/v1/rpc/worker_file_processing_job`, headers, controller.signal, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ p_job_id: job.id, p_runner_token: runnerToken }),
       });
-      if (!fileResponse.ok) throw new Failure(502, 'DATABASE', 'Could not file the lecture notebook.');
+      if (!fileResponse.ok) {
+        const detail = await fileResponse.text().catch(() => '');
+        throw new Failure(502, 'DATABASE', `Could not file the lecture notebook: HTTP ${fileResponse.status} ${detail.slice(0, 300)}`);
+      }
       let lectureId: unknown;
       try { lectureId = await fileResponse.json(); } catch { throw new Failure(502, 'DATABASE', 'Invalid filing response.'); }
       if (typeof lectureId !== 'string') throw new Failure(502, 'DATABASE', 'No lecture ID returned from filing.');
@@ -488,7 +525,7 @@ export function createHandler(config: Config, fetcher: typeof fetch = fetch, log
       return json({ claimed: true, jobId: job.id, stage: 'completed', lectureId });
     } catch (error) {
       if (statusContext) await releaseClaim(fetcher, statusContext, logger);
-      if (leaseContext) await releaseLease(fetcher, leaseContext.origin, leaseContext.headers, leaseContext.jobId, leaseContext.runnerToken);
+      if (leaseContext) await releaseLease(fetcher, leaseContext.origin, leaseContext.headers, leaseContext.jobId, leaseContext.runnerToken, leaseContext.retryCount, logger);
       const failure = controller.signal.aborted ? new Failure(504, 'TIMEOUT', 'Worker processing timed out.')
         : error instanceof Failure ? error : new Failure(502, 'UPSTREAM', 'Worker processing failed.');
       log(logger, 'error', 'request-failed', { stage, code: failure.code, status: failure.status });

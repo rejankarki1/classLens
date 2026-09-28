@@ -22,6 +22,8 @@ import {
   type PhotoQualityWarning,
 } from '@/features/capture/captureSession';
 import { checkPhotoQuality } from '@/features/capture/photoQuality';
+import { logTiming } from '@/lib/timing';
+import { runProcessingJob } from '@/services/processingOrchestrator';
 import { enqueuePhotoProcessingJob } from '@/services/processingJobs';
 
 function photoFromCamera(picture: CameraCapturedPicture, sequence: number): CaptureSessionPhoto {
@@ -119,7 +121,12 @@ export default function CaptureScreen() {
   }
 
   async function analyzePhoto(photo: CaptureSessionPhoto) {
+    const start = Date.now();
     const quality = await checkPhotoQuality(photo.uri);
+    const { File } = await import('expo-file-system');
+    let bytes = 0;
+    try { bytes = new File(photo.uri).size ?? 0; } catch { /* best-effort for the timing log only */ }
+    logTiming('capture', 'blur-check', Date.now() - start, { photoId: photo.id, bytes });
     if (removedPhotos.current.has(photo.id)) return;
     updatePhotos((current) => current.map((item) => item.id === photo.id ? { ...item, quality } : item));
     if (quality.status === 'warning') {
@@ -176,10 +183,12 @@ export default function CaptureScreen() {
     if (!photosRef.current.length || pending.current > 0 || finishing) return;
     setFinishing(true);
     const activeChecks = [...checks.current.values()];
+    const waitStart = Date.now();
     const completed = activeChecks.length === 0 || await Promise.race([
       Promise.allSettled(activeChecks).then(() => true),
       new Promise<false>((resolve) => setTimeout(() => resolve(false), 1500)),
     ]);
+    logTiming('capture', 'quality-check-wait', Date.now() - waitStart);
     let sessionPhotos = photosRef.current;
     if (!completed) {
       sessionPhotos = sessionPhotos.map((photo) => photo.quality.status === 'checking'
@@ -204,8 +213,11 @@ export default function CaptureScreen() {
       photos: sessionPhotos,
     };
     try {
+      const jobStart = Date.now();
       const job = await enqueuePhotoProcessingJob(session);
-      router.push({ pathname: '/processing', params: { jobId: job.id } });
+      logTiming('capture', 'job-creation', Date.now() - jobStart);
+      void runProcessingJob(job.id, 'immediate');
+      router.replace('/');
     } catch (caught) {
       setCameraError(caught instanceof Error ? caught.message : 'The processing job could not be saved. Try again.');
       setFinishing(false);

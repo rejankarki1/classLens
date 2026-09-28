@@ -42,6 +42,7 @@ vm.runInNewContext(code, {
   exports: serviceExports, Error,
   require: (name) => {
     if (name === '@/lib/dataMode') return { getDataMode: () => 'supabase' };
+    if (name === '@/lib/timing') return { logTiming: () => {} };
     if (name === 'expo-crypto') return {
       CryptoDigestAlgorithm: { SHA256: 'SHA-256' },
       digestStringAsync: async () => '0'.repeat(64),
