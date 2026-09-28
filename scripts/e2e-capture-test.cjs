@@ -179,61 +179,37 @@ async function main() {
   if (uploadedError) throw new Error(`Could not move to uploaded: ${uploadedError.message}`);
   log(`job marked uploaded (${elapsed(t)})`);
 
-  // --- Nudge + poll the worker ----------------------------------------------
+  // --- Invoke and await this exact job ---------------------------------------
   const start = Date.now();
-  const timeoutMs = args.timeoutSec * 1000;
-  let lastStage = 'uploaded';
-  let stageStart = Date.now();
-  let finalJob = null;
-
-  while (Date.now() - start < timeoutMs) {
-    const invokeResponse = await fetch(`${supabaseUrl}/functions/v1/process-job`, {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), args.timeoutSec * 1000);
+  let invokeResponse;
+  try {
+    invokeResponse = await fetch(`${supabaseUrl}/functions/v1/process-job`, {
       method: 'POST',
       headers: { apikey: publishableKey, Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
-      body: '{}',
-    }).catch((error) => { log(`worker invoke network error: ${error.message}`); return null; });
-
-    if (invokeResponse) {
-      const invokeBody = await invokeResponse.json().catch(() => null);
-      if (invokeBody && invokeBody.jobId && invokeBody.jobId !== jobId) {
-        log(`worker claimed a different, older job (${invokeBody.jobId}) -- queue is backed up, will keep nudging`);
-      }
-    }
-
-    await new Promise((resolve) => setTimeout(resolve, 3000));
-
-    const { data: current, error: pollError } = await supabase
-      .from('processing_jobs').select('*').eq('id', jobId).maybeSingle();
-    if (pollError) { log(`poll error: ${pollError.message}`); continue; }
-    if (!current) { log('poll error: job row disappeared'); continue; }
-
-    if (current.stage !== lastStage) {
-      log(`stage ${lastStage} -> ${current.stage} (spent ${elapsed(stageStart)} in ${lastStage}, total ${elapsed(start)})`);
-      lastStage = current.stage;
-      stageStart = Date.now();
-    }
-
-    if (['completed', 'course_needed', 'terminal_failed'].includes(current.stage)) {
-      finalJob = current;
-      break;
-    }
-    if (current.stage === 'retryable_failed') {
-      // Not a durable outcome on its own, but nothing in this script or the
-      // server auto-resumes it -- treat as the end state for this run.
-      finalJob = current;
-      break;
-    }
+      body: JSON.stringify({ jobId }),
+      signal: controller.signal,
+    });
+  } finally {
+    clearTimeout(timeout);
+  }
+  const invokeBody = await invokeResponse.json().catch(() => null);
+  log(`targeted worker returned HTTP ${invokeResponse.status} (${elapsed(start)})`);
+  if (!invokeResponse.ok) {
+    throw new Error(`Worker invocation failed: HTTP ${invokeResponse.status} ${JSON.stringify(invokeBody)}`);
+  }
+  if (invokeBody?.jobId !== jobId) {
+    throw new Error(`Worker did not return the targeted job ${jobId}.`);
   }
 
-  if (!finalJob) {
-    const { data: timedOut } = await supabase.from('processing_jobs').select('*').eq('id', jobId).maybeSingle();
-    log(`TIMEOUT after ${args.timeoutSec}s. Last known state:`);
-    console.log(timedOut);
-    process.exitCode = 1;
-    return;
-  }
-
-  log(`finished in ${elapsed(start)} total`);
+  t = Date.now();
+  const { data: finalJob, error: finalReadError } = await supabase
+    .from('processing_jobs').select('*').eq('id', jobId).maybeSingle();
+  if (finalReadError) throw new Error(`Final job read failed: ${finalReadError.message}`);
+  if (!finalJob) throw new Error('Final job row disappeared.');
+  log(`final job verified stage=${finalJob.stage} (${elapsed(t)})`);
+  log(`worker + verification finished in ${elapsed(start)} total`);
   if (finalJob.stage === 'completed') {
     log(`RESULT: completed. lectureId=${finalJob.lecture_id}`);
   } else if (finalJob.stage === 'course_needed') {

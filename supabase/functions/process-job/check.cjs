@@ -88,10 +88,22 @@ function setup(overrides = {}) {
     if (url.endsWith('/auth/v1/user')) {
       return init.headers.Authorization === 'Bearer user-token' ? json({ id: ownerId }) : json({ error: 'invalid token' }, 401);
     }
+    if (url.endsWith('/rest/v1/rpc/claim_processing_job_by_id') && init.method === 'POST') {
+      const body = JSON.parse(init.body);
+      assert.equal(body.p_job_id, jobId);
+      assert.equal(body.p_owner_id, ownerId);
+      assert.match(body.p_runner_token, /^[0-9a-f-]{36}$/);
+      return json(state.noJobAvailable ? [] : [state.job]);
+    }
     if (url.endsWith('/rest/v1/rpc/claim_next_processing_job') && init.method === 'POST') {
       const body = JSON.parse(init.body);
       assert.match(body.p_runner_token, /^[0-9a-f-]{36}$/);
       return json(state.noJobAvailable ? [] : [state.job]);
+    }
+    if (url.includes('/rest/v1/processing_jobs?id=eq.') && (!init.method || init.method === 'GET')) {
+      assert.ok(url.includes(`id=eq.${jobId}`));
+      assert.ok(url.includes(`owner_id=eq.${ownerId}`));
+      return json(overrides.currentJobRows ?? [state.job]);
     }
     if (url.includes('/rest/v1/captures?processing_job_id=') && (!init.method || init.method === 'GET')) {
       return json(overrides.captureRows ?? captureRows());
@@ -147,10 +159,11 @@ function setup(overrides = {}) {
   return { handler: createHandler({ ...config, ...overrides.config }, fetcher, logger), calls, logs, state };
 }
 
-function request(bearer = 'user-token') {
+function request(bearer = 'user-token', body = { jobId }) {
   return new Request('https://example.invalid/process-job', {
     method: 'POST',
     headers: bearer ? { authorization: `Bearer ${bearer}`, 'content-type': 'application/json' } : { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
   });
 }
 
@@ -166,7 +179,7 @@ function request(bearer = 'user-token') {
   // any other invalid token, not silently succeed.
   const cronSecret = 'cron-secret-value';
   const cronTriggered = setup({ noJobAvailable: true, config: { cronSecret } });
-  const cronResponse = await cronTriggered.handler(request(cronSecret));
+  const cronResponse = await cronTriggered.handler(request(cronSecret, {}));
   assert.equal(cronResponse.status, 200);
   assert.deepEqual(await cronResponse.json(), { claimed: false });
   assert.equal(cronTriggered.calls.some((call) => call.url.endsWith('/auth/v1/user')), false, 'the cron path must never call /auth/v1/user');
@@ -174,9 +187,32 @@ function request(bearer = 'user-token') {
   const wrongCronSecret = setup({ config: { cronSecret } });
   assert.equal((await wrongCronSecret.handler(request('not-the-secret'))).status, 401);
 
+  const missingTarget = setup();
+  assert.equal((await missingTarget.handler(request('user-token', {}))).status, 400);
+  assert.equal(missingTarget.calls.some((call) => call.url.includes('/rpc/claim_')), false);
+
+  const invalidTarget = setup();
+  assert.equal((await invalidTarget.handler(request('user-token', { jobId: 'not-a-uuid' }))).status, 400);
+
+  const targetedCron = setup({ config: { cronSecret } });
+  assert.equal((await targetedCron.handler(request(cronSecret, { jobId }))).status, 400);
+
   const empty = setup({ noJobAvailable: true });
   const emptyBody = await (await empty.handler(request())).json();
-  assert.deepEqual(emptyBody, { claimed: false });
+  assert.deepEqual(emptyBody, { claimed: false, jobId, status: 'in_progress' });
+
+  const foreignOrMissing = setup({ noJobAvailable: true, currentJobRows: [] });
+  assert.deepEqual(await (await foreignOrMissing.handler(request())).json(), {
+    claimed: false, jobId, status: 'unavailable',
+  });
+
+  const alreadyCompleted = setup({
+    noJobAvailable: true,
+    currentJobRows: [jobRow({ stage: 'completed', lecture_id: 'capture-job:' + jobId })],
+  });
+  assert.deepEqual(await (await alreadyCompleted.handler(request())).json(), {
+    claimed: false, jobId, status: 'completed', lectureId: 'capture-job:' + jobId,
+  });
 
   const unsupportedMedia = setup({ job: jobRow({ media_type: 'audio' }) });
   const unsupportedResponse = await unsupportedMedia.handler(request());

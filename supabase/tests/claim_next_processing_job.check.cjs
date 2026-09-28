@@ -105,11 +105,105 @@ function psqlAsync(sql) {
     `job must end claimed exactly once by the winning token, got "${after}"`,
   );
 
-  psql(`delete from public.processing_jobs where id = '${jobId}'; delete from auth.users where id = '${ownerId}';`);
+  const targetedJobId = crypto.randomUUID();
+  const targetedSessionId = `targeted-claim-test-${targetedJobId}`;
+  const otherOwnerId = crypto.randomUUID();
+  psql(`
+    insert into auth.users (id) values ('${otherOwnerId}');
+    insert into public.processing_jobs
+      (id, owner_id, capture_session_id, media_type, stage, total_count, uploaded_count)
+      values ('${targetedJobId}', '${ownerId}', '${targetedSessionId}', 'photo', 'queued', 1, 0);
+    update public.processing_jobs set stage = 'uploading' where id = '${targetedJobId}';
+    update public.processing_jobs set stage = 'uploaded', uploaded_count = 1 where id = '${targetedJobId}';
+  `);
+
+  const wrongOwnerClaim = psql(
+    `select id from public.claim_processing_job_by_id(
+      '${targetedJobId}'::uuid, '${otherOwnerId}'::uuid, '${crypto.randomUUID()}'::uuid, 300
+    );`,
+    { tuplesOnly: true },
+  ).trim();
+  assert.equal(wrongOwnerClaim, '', 'a mismatched owner must not reveal or claim the targeted job');
+
+  const targetedTokens = Array.from({ length: CONCURRENCY }, () => crypto.randomUUID());
+  const targetedOutcomes = await Promise.all(
+    targetedTokens.map(async (token) => {
+      const stdout = await psqlAsync(
+        `select pg_sleep(0.2); select id, runner_token from public.claim_processing_job_by_id(
+          '${targetedJobId}'::uuid, '${ownerId}'::uuid, '${token}'::uuid, 300
+        );`,
+      );
+      return { token, claimLine: stdout.split('\n').filter(Boolean).pop() ?? '' };
+    }),
+  );
+  const targetedWinners = targetedOutcomes.filter((outcome) => outcome.claimLine.length > 0);
+  assert.equal(targetedWinners.length, 1, 'exactly one concurrent targeted claim must win');
+  assert.ok(targetedWinners[0].claimLine.includes(targetedJobId));
+  assert.ok(targetedWinners[0].claimLine.includes(targetedWinners[0].token));
+
+  const uploadFailureId = crypto.randomUUID();
+  const backingOffId = crypto.randomUUID();
+  const cappedId = crypto.randomUUID();
+  psql(`
+    insert into public.processing_jobs
+      (id, owner_id, capture_session_id, media_type, stage, resume_stage, total_count, uploaded_count, retry_count, updated_at)
+    values
+      ('${uploadFailureId}', '${ownerId}', 'upload-failure-${uploadFailureId}', 'photo',
+       'retryable_failed', 'uploading', 1, 0, 1, now() - interval '30 minutes'),
+      ('${backingOffId}', '${ownerId}', 'backoff-${backingOffId}', 'photo',
+       'retryable_failed', 'analyzing', 1, 1, 1, now()),
+      ('${cappedId}', '${ownerId}', 'capped-${cappedId}', 'photo',
+       'retryable_failed', 'filing', 1, 1, 3, now() - interval '30 minutes');
+  `);
+
+  for (const excluded of [uploadFailureId, backingOffId, cappedId]) {
+    const result = psql(
+      `select id from public.claim_processing_job_by_id(
+        '${excluded}'::uuid, '${ownerId}'::uuid, '${crypto.randomUUID()}'::uuid, 300
+      );`,
+      { tuplesOnly: true },
+    ).trim();
+    assert.equal(result, '', `ineligible retryable job ${excluded} must not be claimed`);
+  }
+  const globalExcluded = psql(
+    `select id from public.claim_next_processing_job('${crypto.randomUUID()}'::uuid, 300);`,
+    { tuplesOnly: true },
+  ).trim();
+  assert.equal(globalExcluded, '', 'global recovery must exclude upload failures, active backoff, and capped jobs');
+
+  psql(`update public.processing_jobs set updated_at = now() - interval '3 minutes' where id = '${backingOffId}';`);
+  const targetedRetryToken = crypto.randomUUID();
+  const resumedTarget = psql(
+    `select id, stage, resume_stage, runner_token from public.claim_processing_job_by_id(
+      '${backingOffId}'::uuid, '${ownerId}'::uuid, '${targetedRetryToken}'::uuid, 300
+    );`,
+    { tuplesOnly: true },
+  ).trim();
+  assert.equal(resumedTarget, `${backingOffId}|analyzing||${targetedRetryToken}`);
+
+  psql(`
+    update public.processing_jobs
+    set stage = 'retryable_failed', resume_stage = 'analyzing', retry_count = 2,
+        runner_token = null, lease_expires_at = null, updated_at = now() - interval '5 minutes'
+    where id = '${backingOffId}';
+  `);
+  const globalRetryToken = crypto.randomUUID();
+  const resumedGlobal = psql(
+    `select id, stage, resume_stage, runner_token from public.claim_next_processing_job('${globalRetryToken}'::uuid, 300);`,
+    { tuplesOnly: true },
+  ).trim();
+  assert.equal(resumedGlobal, `${backingOffId}|analyzing||${globalRetryToken}`);
+
+  psql(`
+    delete from public.processing_jobs where id in (
+      '${jobId}', '${targetedJobId}', '${uploadFailureId}', '${backingOffId}', '${cappedId}'
+    );
+    delete from auth.users where id in ('${ownerId}', '${otherOwnerId}');
+  `);
 
   console.log(
     `PASS: ${CONCURRENCY} concurrent claim_next_processing_job() calls on one 'uploaded' job -> ` +
-      `exactly 1 winner (${winnerToken}), ${CONCURRENCY - 1} no-ops, no double-claim.`,
+      `exactly 1 winner; targeted ownership, server-stage retry backoff, upload exclusion, and retry cap verified.`,
   );
 })().catch((error) => {
   console.error(error);

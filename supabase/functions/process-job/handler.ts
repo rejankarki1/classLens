@@ -277,37 +277,77 @@ export function createHandler(config: Config, fetcher: typeof fetch = fetch, log
       if (!config.supabaseUrl.trim() || !config.publishableKey.trim() || !config.serviceRoleKey.trim() || !config.geminiKey.trim()) {
         throw new Failure(503, 'CONFIGURATION', 'Worker is not configured.');
       }
-      // Claims whatever job is next in the global queue, not just the caller's
-      // own -- so any caller must either be a signed-in ClassLens user, or
-      // present the exact pg_cron/pg_net recovery-schedule secret (Session D).
-      // Never reachable by an anonymous client with neither.
       const authorization = request.headers.get('authorization');
       if (!authorization?.startsWith('Bearer ')) throw new Failure(401, 'AUTH', 'Sign in to trigger processing.');
       const origin = config.supabaseUrl.replace(/\/$/, '');
       const presented = authorization.slice('Bearer '.length);
       const isTrustedCron = Boolean(config.cronSecret?.trim()) && timingSafeEqual(presented, config.cronSecret!.trim());
+      let requestedJobId: string | null = null;
+      try {
+        const body = await request.json();
+        if (body && typeof body === 'object' && 'jobId' in body && body.jobId !== undefined && body.jobId !== null) {
+          if (typeof body.jobId !== 'string' || !uuid.test(body.jobId)) {
+            throw new Failure(400, 'INVALID_JOB_ID', 'A valid processing job ID is required.');
+          }
+          requestedJobId = body.jobId;
+        }
+      } catch (error) {
+        if (error instanceof Failure) throw error;
+        throw new Failure(400, 'INVALID_REQUEST', 'Request body must be valid JSON.');
+      }
+
+      let requestingUserId: string | null = null;
       if (!isTrustedCron) {
+        if (!requestedJobId) throw new Failure(400, 'JOB_ID_REQUIRED', 'A processing job ID is required.');
         const userHeaders = { apikey: config.publishableKey.trim(), Authorization: authorization };
         const userResponse = await rest(fetcher, `${origin}/auth/v1/user`, userHeaders, controller.signal);
         if (!userResponse.ok) throw new Failure(401, 'AUTH', 'Your session is no longer valid. Sign in again.');
         const user = await userResponse.json();
         if (!user || typeof user.id !== 'string' || !uuid.test(user.id)) throw new Failure(401, 'AUTH', 'Authenticated user is invalid.');
+        requestingUserId = user.id;
+      } else if (requestedJobId) {
+        throw new Failure(400, 'CRON_JOB_ID', 'Recovery calls must not target a processing job.');
       }
 
       const headers = { apikey: config.serviceRoleKey.trim(), Authorization: `Bearer ${config.serviceRoleKey.trim()}` };
 
       stage = 'claim';
       const runnerToken = crypto.randomUUID();
-      const claimResponse = await rest(fetcher, `${origin}/rest/v1/rpc/claim_next_processing_job`, headers, controller.signal, {
+      const claimRpc = requestedJobId ? 'claim_processing_job_by_id' : 'claim_next_processing_job';
+      const claimBody = requestedJobId
+        ? { p_job_id: requestedJobId, p_owner_id: requestingUserId, p_runner_token: runnerToken, p_lease_seconds: config.leaseSeconds ?? defaultLeaseSeconds }
+        : { p_runner_token: runnerToken, p_lease_seconds: config.leaseSeconds ?? defaultLeaseSeconds };
+      const claimResponse = await rest(fetcher, `${origin}/rest/v1/rpc/${claimRpc}`, headers, controller.signal, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ p_runner_token: runnerToken, p_lease_seconds: config.leaseSeconds ?? defaultLeaseSeconds }),
+        body: JSON.stringify(claimBody),
       });
       if (!claimResponse.ok) throw new Failure(502, 'DATABASE', 'Could not claim a processing job.');
       let claimedRows: unknown;
       try { claimedRows = await claimResponse.json(); } catch { throw new Failure(502, 'DATABASE', 'Invalid claim response.'); }
       if (!Array.isArray(claimedRows)) throw new Failure(502, 'DATABASE', 'Invalid claim response.');
-      if (!claimedRows.length) return json({ claimed: false });
+      if (!claimedRows.length) {
+        if (!requestedJobId) return json({ claimed: false });
+        const currentResponse = await rest(fetcher,
+          `${origin}/rest/v1/processing_jobs?id=eq.${requestedJobId}&owner_id=eq.${requestingUserId}&select=id,stage,lecture_id&limit=1`,
+          headers, controller.signal);
+        if (!currentResponse.ok) throw new Failure(502, 'DATABASE', 'Could not read the processing job.');
+        const currentRows = await currentResponse.json();
+        if (!Array.isArray(currentRows) || !currentRows.length) {
+          return json({ claimed: false, jobId: requestedJobId, status: 'unavailable' });
+        }
+        const current = currentRows[0] as { stage?: unknown; lecture_id?: unknown };
+        if (current.stage === 'completed' && typeof current.lecture_id === 'string') {
+          return json({ claimed: false, jobId: requestedJobId, status: 'completed', lectureId: current.lecture_id });
+        }
+        if (current.stage === 'course_needed' || current.stage === 'retryable_failed' || current.stage === 'terminal_failed') {
+          return json({ claimed: false, jobId: requestedJobId, status: current.stage });
+        }
+        return json({ claimed: false, jobId: requestedJobId, status: 'in_progress' });
+      }
       const job = claimedRows[0] as JobRow;
+      if (requestedJobId && (job.id !== requestedJobId || job.owner_id !== requestingUserId)) {
+        throw new Failure(403, 'JOB_OWNERSHIP', 'The processing job is not available.');
+      }
       leaseContext = { origin, headers, jobId: job.id, runnerToken, retryCount: job.retry_count, resumeStage: job.stage === 'filing' ? 'filing' : 'analyzing' };
       log(logger, 'log', 'claimed', { jobId: job.id, ownerId: job.owner_id });
 
