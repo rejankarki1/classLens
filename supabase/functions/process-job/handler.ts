@@ -377,6 +377,7 @@ export function createHandler(config: Config, fetcher: typeof fetch = fetch, log
       const headers = { apikey: config.serviceRoleKey.trim(), Authorization: `Bearer ${config.serviceRoleKey.trim()}` };
 
       stage = 'claim';
+      const claimStartedAt = Date.now();
       const runnerToken = crypto.randomUUID();
       const claimRpc = requestedJobId ? 'claim_processing_job_by_id' : 'claim_next_processing_job';
       const claimBody = requestedJobId
@@ -415,6 +416,7 @@ export function createHandler(config: Config, fetcher: typeof fetch = fetch, log
       }
       leaseContext = { origin, headers, jobId: job.id, runnerToken, retryCount: job.retry_count, resumeStage: job.stage === 'filing' ? 'filing' : 'analyzing' };
       log(logger, 'log', 'claimed', { jobId: job.id, ownerId: job.owner_id });
+      log(logger, 'log', 'timing', { step: 'worker-claimed', durationMs: Date.now() - claimStartedAt, jobId: job.id, stage: job.stage });
 
       if (job.media_type !== 'photo') {
         await rest(fetcher, `${origin}/rest/v1/processing_jobs?id=eq.${job.id}&runner_token=eq.${runnerToken}`, headers, controller.signal, {
@@ -760,6 +762,7 @@ export function createHandler(config: Config, fetcher: typeof fetch = fetch, log
       try { lectureId = await fileResponse.json(); } catch { throw new Failure(502, 'DATABASE', 'Invalid filing response.'); }
       if (typeof lectureId !== 'string') throw new Failure(502, 'DATABASE', 'No lecture ID returned from filing.');
       leaseContext = null;
+      log(logger, 'log', 'timing', { step: 'filed', jobId: job.id, lectureId });
       return json({ claimed: true, jobId: job.id, stage: 'completed', lectureId });
     } catch (error) {
       if (statusContext) await releaseClaim(fetcher, statusContext, logger);

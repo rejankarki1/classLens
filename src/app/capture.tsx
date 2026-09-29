@@ -216,6 +216,7 @@ export default function CaptureScreen() {
       const jobStart = Date.now();
       const job = await enqueuePhotoProcessingJob(session);
       logTiming('capture', 'job-creation', Date.now() - jobStart);
+      logTiming('processing', 'job-created', 0, { jobId: job.id, stage: job.stage });
       void runProcessingJob(job.id, 'immediate');
       router.replace('/');
     } catch (caught) {

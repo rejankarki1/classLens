@@ -10,6 +10,7 @@ import { runProcessingJob } from '@/services/processingOrchestrator';
 import { getProcessingJob, onProcessingJobsChange, retryProcessingJob } from '@/services/processingJobs';
 import { requestProcessingNotificationPermission } from '@/services/processingNotifications';
 import { registerDeviceToken } from '@/services/pushTokens';
+import { logTiming } from '@/lib/timing';
 
 function copy(job: ProcessingJob | null) {
   if (!job) return { title: 'Opening your processing job', body: 'Checking the saved lecture state.' };
@@ -36,6 +37,7 @@ export default function ProcessingScreen() {
   const [error, setError] = useState('');
   const [notifying, setNotifying] = useState(false);
   const requestSeq = useRef(0);
+  const visibleLogged = useRef<string | null>(null);
 
   const refresh = useCallback(async () => {
     if (!jobId) { setLoading(false); return null; }
@@ -44,6 +46,10 @@ export default function ProcessingScreen() {
       const current = await getProcessingJob(jobId);
       if (seq !== requestSeq.current) return current;
       setJob(current);
+      if (current?.stage === 'completed' && current.lectureId && visibleLogged.current !== current.id) {
+        visibleLogged.current = current.id;
+        logTiming('processing', 'lecture-visible', 0, { jobId: current.id, lectureId: current.lectureId });
+      }
       setError('');
       return current;
     } catch (caught) {

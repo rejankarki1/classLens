@@ -16,20 +16,20 @@ type JobRow = {
   id: string; owner_id: string; capture_session_id: string; media_type: ProcessingJob['mediaType'];
   stage: ProcessingJobStage; resume_stage: ResumableProcessingStage | null; uploaded_count: number;
   total_count: number; retry_count: number; overload_retry_count: number; overload_started_at: string | null;
-  next_attempt_at: string | null; last_error_code: string | null; last_error_message: string | null;
+  next_attempt_at: string | null; lease_expires_at: string | null; last_error_code: string | null; last_error_message: string | null;
   course_id: string | null; suggested_course_id: string | null; suggested_course_label: string | null;
   match_confidence: number | null; match_explanation: string | null; capture_analysis_id: string | null;
   lecture_id: string | null; created_at: string; updated_at: string; completed_at: string | null;
 };
 
-export const processingJobColumns = 'id, owner_id, capture_session_id, media_type, stage, resume_stage, uploaded_count, total_count, retry_count, overload_retry_count, overload_started_at, next_attempt_at, last_error_code, last_error_message, course_id, suggested_course_id, suggested_course_label, match_confidence, match_explanation, capture_analysis_id, lecture_id, created_at, updated_at, completed_at';
+export const processingJobColumns = 'id, owner_id, capture_session_id, media_type, stage, resume_stage, uploaded_count, total_count, retry_count, overload_retry_count, overload_started_at, next_attempt_at, lease_expires_at, last_error_code, last_error_message, course_id, suggested_course_id, suggested_course_label, match_confidence, match_explanation, capture_analysis_id, lecture_id, created_at, updated_at, completed_at';
 
 function fromRow(row: JobRow): ProcessingJob {
   return {
     id: row.id, ownerId: row.owner_id, captureSessionId: row.capture_session_id, mediaType: row.media_type,
     stage: row.stage, resumeStage: row.resume_stage, uploadedCount: row.uploaded_count, totalCount: row.total_count,
     retryCount: row.retry_count, overloadRetryCount: row.overload_retry_count,
-    overloadStartedAt: row.overload_started_at, nextAttemptAt: row.next_attempt_at,
+    overloadStartedAt: row.overload_started_at, nextAttemptAt: row.next_attempt_at, leaseExpiresAt: row.lease_expires_at,
     lastErrorCode: row.last_error_code, lastErrorMessage: row.last_error_message,
     courseId: row.course_id, suggestedCourseId: row.suggested_course_id, suggestedCourseLabel: row.suggested_course_label,
     matchConfidence: row.match_confidence, matchExplanation: row.match_explanation,
@@ -123,6 +123,26 @@ export async function getActiveProcessingJobs(limit = 5): Promise<ProcessingJob[
     .in('stage', ['queued', 'uploading', 'uploaded', 'analyzing', 'filing', 'retryable_failed'])
     .order('updated_at', { ascending: false }).limit(limit).returns<JobRow[]>();
   if (error) throw new Error(`Could not load active processing jobs: ${error.message}`);
+  return data.map(fromRow);
+}
+
+/** Current phone-visible work only; stale abandoned rows do not drive Home. */
+export async function getActuallyActiveProcessingJobs(limit = 5): Promise<ProcessingJob[]> {
+  const jobs = await getActiveProcessingJobs(Math.max(limit * 3, limit));
+  const now = Date.now();
+  return jobs.filter((job) => {
+    if (job.stage === 'retryable_failed') return false;
+    const leaseActive = job.leaseExpiresAt ? new Date(job.leaseExpiresAt).getTime() > now : false;
+    const recentlyUpdated = now - new Date(job.updatedAt).getTime() <= 10 * 60_000;
+    return leaseActive || recentlyUpdated;
+  }).slice(0, limit);
+}
+
+export async function getCourseNeededJobs(limit = 50): Promise<ProcessingJob[]> {
+  const supabase = await client();
+  const { data, error } = await supabase.from('processing_jobs').select(processingJobColumns)
+    .eq('stage', 'course_needed').order('created_at', { ascending: false }).limit(limit).returns<JobRow[]>();
+  if (error) throw new Error(`Could not load captures needing a course: ${error.message}`);
   return data.map(fromRow);
 }
 

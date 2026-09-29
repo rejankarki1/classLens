@@ -130,6 +130,7 @@ export async function runProcessingJob(jobId: string, _trigger: ProcessingTrigge
       job = await updateProcessingJob(job.id, token, {
         stage: 'uploaded', uploaded_count: uploadedCount, runner_token: null, lease_expires_at: null,
       });
+      logTiming('processing', 'upload-finished', Date.now() - uploadPhaseStart, { jobId: job.id, pages: job.totalCount });
       void triggerWorker();
       return job;
     }
@@ -141,6 +142,17 @@ export async function runProcessingJob(jobId: string, _trigger: ProcessingTrigge
   } finally {
     notifyProcessingJobsChanged();
   }
+}
+
+/** Directly asks the worker to claim and finish this user's job now. */
+export async function processJobNow(jobId: string): Promise<ProcessingJob | null> {
+  const { supabase } = await import('@/lib/supabase');
+  const { error } = await supabase.functions.invoke('process-job', {
+    method: 'POST',
+    body: { jobId },
+  });
+  if (error) throw error;
+  return getProcessingJob(jobId);
 }
 
 export async function resumeProcessingJobs(trigger: ProcessingTrigger, limit = trigger === 'background' ? 1 : 3): Promise<void> {

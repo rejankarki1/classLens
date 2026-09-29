@@ -29,6 +29,7 @@ export type ProcessingJob = {
   overloadRetryCount: number;
   overloadStartedAt: string | null;
   nextAttemptAt: string | null;
+  leaseExpiresAt: string | null;
   lastErrorCode: string | null;
   lastErrorMessage: string | null;
   courseId: string | null;

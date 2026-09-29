@@ -3,10 +3,9 @@ import { useCallback, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, View } from 'react-native';
 
 import { Brand } from '@/constants/theme';
-import { SectionHeader } from '@/components/ui/Editorial';
-import type { InboxEvent, ProcessingJob } from '@/types';
+import type { ProcessingJob } from '@/types';
 import { ThemedText } from './themed-text';
-import { getActiveProcessingJobs, getInboxEvents, onProcessingJobsChange } from '@/services/processingJobs';
+import { getActuallyActiveProcessingJobs, getCourseNeededJobs, onProcessingJobsChange } from '@/services/processingJobs';
 
 // Three calm zones, replacing the old flat two-list dump:
 //  - a single quiet status line while anything is uploading/processing
@@ -26,30 +25,13 @@ function calmStatus(jobs: ProcessingJob[]): string {
   return 'Uploading your lecture…';
 }
 
-type InboxCopy = { title: string; subtitle: string | null; action: string };
-
-function inboxCopy(event: InboxEvent): InboxCopy {
-  if (event.eventType === 'course_needed') {
-    return { title: 'Course needed', subtitle: event.job.suggestedCourseLabel, action: 'Choose course' };
-  }
-  return { title: event.job.lastErrorMessage ?? 'This lecture needs a new capture', subtitle: null, action: 'Review' };
-}
-
-function openInboxEvent(event: InboxEvent) {
-  if (event.eventType === 'course_needed') {
-    router.push({ pathname: '/course-resolution' as never, params: { jobId: event.job.id } } as never);
-  } else {
-    router.push({ pathname: '/processing', params: { jobId: event.job.id } });
-  }
-}
-
 export function HomeInbox() {
-  const [events, setEvents] = useState<InboxEvent[]>([]);
+  const [needsCourse, setNeedsCourse] = useState<ProcessingJob[]>([]);
   const [active, setActive] = useState<ProcessingJob[]>([]);
 
   const refresh = useCallback(() => {
-    void getInboxEvents(10).then(setEvents).catch(() => setEvents([]));
-    void getActiveProcessingJobs(5).then(setActive).catch(() => setActive([]));
+    void getCourseNeededJobs(50).then(setNeedsCourse).catch(() => setNeedsCourse([]));
+    void getActuallyActiveProcessingJobs(5).then(setActive).catch(() => setActive([]));
   }, []);
 
   useFocusEffect(useCallback(() => {
@@ -57,9 +39,7 @@ export function HomeInbox() {
     return onProcessingJobsChange(refresh);
   }, [refresh]));
 
-  const needsInput = events.filter((event) => event.eventType === 'course_needed' || event.eventType === 'final_failure');
-
-  if (!active.length && !needsInput.length) return null;
+  if (!active.length && !needsCourse.length) return null;
 
   return (
     <View style={styles.shell} accessibilityLabel="Processing status">
@@ -75,30 +55,15 @@ export function HomeInbox() {
         </Pressable>
       ) : null}
 
-      {needsInput.length ? (
-        <View style={styles.needsInput}>
-          <SectionHeader title="Needs your input" />
-          {needsInput.map((event) => {
-            const copy = inboxCopy(event);
-            return (
-              <Pressable
-                key={event.id}
-                accessibilityRole="button"
-                accessibilityLabel={`${copy.action} for ${copy.title}`}
-                onPress={() => openInboxEvent(event)}
-                style={({ pressed }) => [styles.row, pressed && styles.pressed]}
-              >
-                <View style={styles.copy}>
-                  <ThemedText style={styles.title}>{copy.title}</ThemedText>
-                  {copy.subtitle ? (
-                    <ThemedText type="small" themeColor="textSecondary" numberOfLines={1}>{copy.subtitle}</ThemedText>
-                  ) : null}
-                </View>
-                <ThemedText style={styles.actionText}>{copy.action}</ThemedText>
-              </Pressable>
-            );
-          })}
-        </View>
+      {needsCourse.length ? (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={`${needsCourse.length} captures need a course. Review`}
+          onPress={() => router.push('/inbox')}
+          style={({ pressed }) => [styles.reviewRow, pressed && styles.pressed]}
+        >
+          <ThemedText style={styles.statusText}>{needsCourse.length} captures need a course → Review</ThemedText>
+        </Pressable>
       ) : null}
     </View>
   );
@@ -108,10 +73,6 @@ const styles = StyleSheet.create({
   shell: { gap: 14 },
   statusRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   statusText: { color: Brand.forest, fontWeight: '600' },
-  needsInput: { gap: 10 },
-  row: { minHeight: 56, flexDirection: 'row', alignItems: 'center', gap: 12, padding: 14, borderRadius: 16, backgroundColor: '#F6EFDC' },
-  copy: { flex: 1, gap: 2, minWidth: 0 },
-  title: { fontWeight: '700' },
-  actionText: { color: Brand.forest, fontSize: 13, fontWeight: '800' },
+  reviewRow: { minHeight: 52, justifyContent: 'center' },
   pressed: { opacity: 0.65 },
 });
