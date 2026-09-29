@@ -10,7 +10,7 @@ import { Brand, Fonts } from '@/constants/theme';
 import type { Course, ProcessingJob } from '@/types';
 import { getMyEnrolledCourses, enrollInCourse } from '@/services/enrollment';
 import { chooseProcessingJobCourse, getProcessingJob } from '@/services/processingJobs';
-import { runProcessingJob } from '@/services/processingOrchestrator';
+import { processJobNow } from '@/services/processingOrchestrator';
 
 export default function CourseResolutionScreen() {
   const params = useLocalSearchParams<{ jobId?: string | string[] }>();
@@ -46,8 +46,7 @@ export default function CourseResolutionScreen() {
     setError('');
     try {
       await chooseProcessingJobCourse(job.id, course.id);
-      await runProcessingJob(job.id, 'screen');
-      const completed = await getProcessingJob(job.id);
+      const completed = await processJobNow(job.id);
       if (completed?.lectureId) router.replace({ pathname: '/lecture/[id]', params: { id: completed.lectureId } });
       else router.replace({ pathname: '/processing', params: { jobId: job.id } });
     } catch (caught) {

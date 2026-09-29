@@ -12,6 +12,7 @@ import {
   getJobCaptureIds,
   getProcessingJob,
   getRunnableProcessingJobs,
+  getUnleasedUploadedProcessingJobs,
   notifyProcessingJobsChanged,
   updateProcessingJob,
 } from './processingJobs';
@@ -23,14 +24,43 @@ import { notifyProcessingJob } from './processingNotifications';
 // filing with zero further phone involvement; see docs/CLASSLENS_IMPLEMENTATION_PLAN.md
 // Session C/D exit conditions). The phone's job stops at the upload boundary:
 // stage the job as 'uploaded' and nudge the worker.
-async function triggerWorker(): Promise<void> {
-  try {
-    const { supabase } = await import('@/lib/supabase');
-    await supabase.functions.invoke('process-job', { method: 'POST' });
-  } catch {
-    // Best-effort nudge only. A force-quit right after this call does not
-    // cancel the in-flight request server-side; Session D's pg_cron sweep is
-    // the correctness backstop if this never reaches the server at all.
+const workerRetryDelayMs = 2_000;
+
+function safeWorkerBody(value: unknown): unknown {
+  if (typeof value !== 'string') return value;
+  try { return JSON.parse(value); } catch { return value.slice(0, 1_000); }
+}
+
+async function workerErrorBody(response: Response | undefined, error: unknown): Promise<unknown> {
+  if (response) {
+    try { return safeWorkerBody(await response.clone().text()); } catch { /* use the safe error summary below */ }
+  }
+  return { error: error instanceof Error ? error.message : 'Worker request failed.' };
+}
+
+async function triggerWorker(jobId: string): Promise<void> {
+  const { supabase } = await import('@/lib/supabase');
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
+    const startedAt = Date.now();
+    try {
+      const { data, error, response } = await supabase.functions.invoke('process-job', {
+        method: 'POST',
+        body: { jobId },
+      });
+      const body = error ? await workerErrorBody(response, error) : safeWorkerBody(data);
+      logTiming('processing', 'worker-trigger', Date.now() - startedAt, {
+        jobId, attempt, status: response?.status ?? 0, body,
+      });
+      if (!error) return;
+      if (error.name !== 'FunctionsFetchError' || attempt === 2) return;
+    } catch (error) {
+      logTiming('processing', 'worker-trigger', Date.now() - startedAt, {
+        jobId, attempt, status: 0,
+        body: { error: error instanceof Error ? error.message : 'Worker request failed.' },
+      });
+      if (!(error instanceof TypeError) || attempt === 2) return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, workerRetryDelayMs));
   }
 }
 
@@ -131,7 +161,7 @@ export async function runProcessingJob(jobId: string, _trigger: ProcessingTrigge
         stage: 'uploaded', uploaded_count: uploadedCount, runner_token: null, lease_expires_at: null,
       });
       logTiming('processing', 'upload-finished', Date.now() - uploadPhaseStart, { jobId: job.id, pages: job.totalCount });
-      void triggerWorker();
+      void triggerWorker(job.id);
       return job;
     }
     return job;
@@ -156,6 +186,8 @@ export async function processJobNow(jobId: string): Promise<ProcessingJob | null
 }
 
 export async function resumeProcessingJobs(trigger: ProcessingTrigger, limit = trigger === 'background' ? 1 : 3): Promise<void> {
+  const uploadedJobs = trigger === 'foreground' ? await getUnleasedUploadedProcessingJobs(limit) : [];
   const jobs = await getRunnableProcessingJobs(limit);
   for (const job of jobs) await runProcessingJob(job.id, trigger);
+  for (const job of uploadedJobs) void triggerWorker(job.id);
 }

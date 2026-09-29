@@ -20,6 +20,9 @@ let staged = null;
 let jobCaptureIds = [];
 let uploadCalls = 0;
 let triggerCalls = 0;
+let triggerRequests = [];
+let triggerResults = [];
+let timingLogs = [];
 let notifications = [];
 
 function apply(values) {
@@ -33,8 +36,16 @@ const mocks = {
   'expo-file-system': { File: class { constructor() {} delete() {} } },
   '@/features/processing/stateMachine': { MAX_PROCESSING_FAILURES: 3 },
   '@/types': {},
-  '@/lib/timing': { logTiming: () => {} },
-  '@/lib/supabase': { supabase: { functions: { invoke: async () => { triggerCalls += 1; } } } },
+  '@/lib/timing': { logTiming: (...args) => { timingLogs.push(args); } },
+  '@/lib/supabase': { supabase: { functions: { invoke: async (name, options) => {
+    triggerCalls += 1;
+    triggerRequests.push({ name, options });
+    return triggerResults.shift() ?? {
+      data: { claimed: true, jobId: options.body.jobId, stage: 'completed' },
+      error: null,
+      response: { status: 200 },
+    };
+  } } } },
   './materials': { uploadCapture: async (input) => { uploadCalls += 1; jobCaptureIds.push(`capture-${input.pageNumber}`); } },
   './photoResize': { resizeForUpload: async (uri) => ({ uri, byteSize: 0 }) },
   './processingLocal': { getStagedCaptureSession: () => staged, removeStagedPhoto: () => {} },
@@ -45,6 +56,7 @@ const mocks = {
     updateProcessingJob: async (_id, _token, values) => apply(values),
     getJobCaptureIds: async () => [...jobCaptureIds],
     getRunnableProcessingJobs: async () => [{ ...job }],
+    getUnleasedUploadedProcessingJobs: async () => [{ ...job, id: 'uploaded-job', stage: 'uploaded' }],
     notifyProcessingJobsChanged: () => {},
   },
 };
@@ -53,7 +65,15 @@ const serviceExports = {};
 vm.runInNewContext(code, { exports: serviceExports, require: (name) => {
   if (!(name in mocks)) throw new Error(`Unexpected import: ${name}`);
   return mocks[name];
-}, Error });
+}, Error, TypeError, setTimeout: (callback) => { callback(); return 0; } });
+
+async function flushWorker() {
+  for (let index = 0; index < 5; index += 1) await new Promise((resolve) => setImmediate(resolve));
+}
+
+function errorResponse(status, body) {
+  return { status, clone: () => ({ text: async () => JSON.stringify(body) }) };
+}
 
 (async () => {
   // Post-upload work (analysis, matching, filing) is entirely the worker's
@@ -69,8 +89,13 @@ vm.runInNewContext(code, { exports: serviceExports, require: (name) => {
   assert.equal(reused.runner_token, null, 'lease must be cleared so the worker can claim immediately');
   assert.equal(reused.lease_expires_at, null, 'lease must be cleared so the worker can claim immediately');
   assert.equal(uploadCalls, 0, 'an already-uploaded page must not be re-uploaded');
-  await new Promise((resolve) => setImmediate(resolve));
+  await flushWorker();
   assert.equal(triggerCalls, 1, 'reaching uploaded must fire a best-effort worker trigger');
+  assert.equal(triggerRequests[0].name, 'process-job');
+  assert.equal(triggerRequests[0].options.method, 'POST');
+  assert.equal(triggerRequests[0].options.body.jobId, 'job', 'the direct worker trigger must target the uploaded job');
+  assert.ok(timingLogs.some(([scope, phase, , meta]) => scope === 'processing' && phase === 'worker-trigger'
+    && meta.jobId === 'job' && meta.status === 200 && meta.body.stage === 'completed'));
 
   // Fresh upload: staged photos present, each must actually upload and count
   // before the job reaches 'uploaded'.
@@ -87,6 +112,30 @@ vm.runInNewContext(code, { exports: serviceExports, require: (name) => {
   assert.equal(uploadCalls, 2, 'every staged photo must be uploaded exactly once');
   assert.equal(fresh.uploadedCount, 2);
   assert.equal(triggerCalls, 1);
+
+  // An HTTP failure is logged but not retried; cron remains the backstop.
+  job = { ...base, stage: 'uploading', uploadedCount: 1, totalCount: 1 };
+  staged = null;
+  jobCaptureIds = ['capture-1'];
+  triggerCalls = 0;
+  triggerResults = [{ data: null, error: { name: 'FunctionsHttpError', message: 'HTTP error' },
+    response: errorResponse(400, { code: 'JOB_ID_REQUIRED' }) }];
+  await serviceExports.runProcessingJob('job', 'foreground');
+  await flushWorker();
+  assert.equal(triggerCalls, 1, 'HTTP responses must not be retried');
+  assert.ok(timingLogs.some(([scope, phase, , meta]) => scope === 'processing' && phase === 'worker-trigger'
+    && meta.status === 400 && meta.body.code === 'JOB_ID_REQUIRED'));
+
+  // A transport failure retries once, then a successful targeted response stops.
+  job = { ...base, stage: 'uploading', uploadedCount: 1, totalCount: 1 };
+  triggerCalls = 0;
+  triggerResults = [
+    { data: null, error: { name: 'FunctionsFetchError', message: 'offline' }, response: undefined },
+    { data: { claimed: true, jobId: 'job', stage: 'completed' }, error: null, response: { status: 200 } },
+  ];
+  await serviceExports.runProcessingJob('job', 'foreground');
+  await flushWorker();
+  assert.equal(triggerCalls, 2, 'a network failure must retry exactly once');
 
   // Claim unavailable: another runner already holds the lease -- must not
   // touch anything, just return the current row.
@@ -134,7 +183,9 @@ vm.runInNewContext(code, { exports: serviceExports, require: (name) => {
   jobCaptureIds = ['capture-1'];
   triggerCalls = 0;
   await serviceExports.resumeProcessingJobs('foreground', 1);
-  assert.equal(triggerCalls, 1, 'foreground resume calls the shared orchestrator');
+  await flushWorker();
+  assert.equal(triggerCalls, 2, 'foreground resume uploads phone-owned work and nudges unleased uploaded work');
+  assert.equal(triggerRequests.at(-1).options.body.jobId, 'uploaded-job');
   job = { ...base, stage: 'uploading', uploadedCount: 1, totalCount: 1 };
   jobCaptureIds = ['capture-1'];
   triggerCalls = 0;

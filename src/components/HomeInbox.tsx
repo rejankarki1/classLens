@@ -1,5 +1,5 @@
 import { router, useFocusEffect } from 'expo-router';
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, View } from 'react-native';
 
 import { Brand } from '@/constants/theme';
@@ -20,24 +20,37 @@ function calmStatus(jobs: ProcessingJob[]): string {
   if (jobs.length > 1) return `Processing ${jobs.length} lectures…`;
   if (jobs[0]?.lastErrorCode === 'GEMINI_ALL_BUSY') return 'Your notes will be ready soon';
   const stage = jobs[0]?.stage;
-  if (stage === 'filing') return 'Finishing your notebook…';
-  if (stage === 'analyzing') return 'Reading your lecture…';
+  if (stage === 'uploaded' || stage === 'analyzing' || stage === 'filing') return 'Making your notes…';
   return 'Uploading your lecture…';
 }
 
 export function HomeInbox() {
   const [needsCourse, setNeedsCourse] = useState<ProcessingJob[]>([]);
   const [active, setActive] = useState<ProcessingJob[]>([]);
+  const [focused, setFocused] = useState(false);
 
-  const refresh = useCallback(() => {
-    void getCourseNeededJobs(50).then(setNeedsCourse).catch(() => setNeedsCourse([]));
+  const refreshActive = useCallback(() => {
     void getActuallyActiveProcessingJobs(5).then(setActive).catch(() => setActive([]));
   }, []);
 
+  const refresh = useCallback(() => {
+    void getCourseNeededJobs(50).then(setNeedsCourse).catch(() => setNeedsCourse([]));
+    refreshActive();
+  }, [refreshActive]);
+
   useFocusEffect(useCallback(() => {
+    setFocused(true);
     refresh();
-    return onProcessingJobsChange(refresh);
+    const off = onProcessingJobsChange(refresh);
+    return () => { setFocused(false); off(); };
   }, [refresh]));
+
+  useEffect(() => {
+    const shouldPoll = active.some((job) => ['uploading', 'uploaded', 'analyzing', 'filing'].includes(job.stage));
+    if (!focused || !shouldPoll) return;
+    const timer = setInterval(refresh, 3_000);
+    return () => clearInterval(timer);
+  }, [active, focused, refresh]);
 
   if (!active.length && !needsCourse.length) return null;
 

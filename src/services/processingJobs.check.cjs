@@ -67,6 +67,48 @@ function jobRow(overrides = {}) {
   for (const outcome of ['completed', 'course_needed', 'terminal_failed']) assert.ok(!stageList.includes(outcome));
   console.log('PASS: getActiveProcessingJobs queries exactly the in-flight stages, excluding the three inbox outcomes.');
 
+  // Foreground recovery targets only uploaded jobs whose lease is absent or expired.
+  let uploadedStage = null;
+  let uploadedLeaseFilter = null;
+  const uploadedSupabase = {
+    from: (table) => {
+      assert.equal(table, 'processing_jobs');
+      return {
+        select: () => ({
+          eq: (column, value) => {
+            assert.equal(column, 'stage');
+            uploadedStage = value;
+            return {
+              or: (filter) => {
+                uploadedLeaseFilter = filter;
+                return { order: () => ({ limit: () => ({ returns: async () => ({
+                  data: [jobRow({ id: 'job-uploaded', stage: 'uploaded', lease_expires_at: null })], error: null,
+                }) }) }) };
+              },
+            };
+          },
+        }),
+      };
+    },
+  };
+  const uploadedService = load(uploadedSupabase);
+  const uploadedJobs = await uploadedService.getUnleasedUploadedProcessingJobs(3);
+  assert.equal(uploadedStage, 'uploaded');
+  assert.match(uploadedLeaseFilter, /^lease_expires_at\.is\.null,lease_expires_at\.lt\./);
+  assert.equal(uploadedJobs[0].id, 'job-uploaded');
+  console.log('PASS: foreground recovery queries unleased uploaded jobs for the authenticated RLS scope.');
+
+  const busyService = load(activeSupabase);
+  activeSupabase.from = () => ({
+    select: () => ({
+      in: () => ({ order: () => ({ limit: () => ({ returns: async () => ({ data: [jobRow({
+        stage: 'retryable_failed', last_error_code: 'GEMINI_ALL_BUSY', updated_at: new Date().toISOString(),
+      })], error: null }) }) }) }),
+    }),
+  });
+  const busyJobs = await busyService.getActuallyActiveProcessingJobs(5);
+  assert.equal(busyJobs.length, 1, 'Gemini capacity backoff must remain visible on Home');
+
   // getInboxEvents: maps the embedded processing_jobs join into a flat
   // InboxEvent, and silently drops a row whose job join came back null
   // (e.g. a race with the FK) rather than crashing the Home screen.

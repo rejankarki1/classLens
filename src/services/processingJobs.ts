@@ -111,6 +111,17 @@ export async function getRunnableProcessingJobs(limit = 3): Promise<ProcessingJo
   return data.map(fromRow);
 }
 
+/** Server-ready jobs that have not been claimed, or whose worker lease expired. */
+export async function getUnleasedUploadedProcessingJobs(limit = 3): Promise<ProcessingJob[]> {
+  const supabase = await client();
+  const { data, error } = await supabase.from('processing_jobs').select(processingJobColumns)
+    .eq('stage', 'uploaded')
+    .or(`lease_expires_at.is.null,lease_expires_at.lt.${new Date().toISOString()}`)
+    .order('created_at').limit(limit).returns<JobRow[]>();
+  if (error) throw new Error(`Could not load uploaded processing jobs: ${error.message}`);
+  return data.map(fromRow);
+}
+
 /**
  * Session G: jobs still in flight -- not yet at a durable inbox outcome
  * (completed/course_needed/terminal_failed all get an inbox_events row
@@ -131,7 +142,7 @@ export async function getActuallyActiveProcessingJobs(limit = 5): Promise<Proces
   const jobs = await getActiveProcessingJobs(Math.max(limit * 3, limit));
   const now = Date.now();
   return jobs.filter((job) => {
-    if (job.stage === 'retryable_failed') return false;
+    if (job.stage === 'retryable_failed') return job.lastErrorCode === 'GEMINI_ALL_BUSY';
     const leaseActive = job.leaseExpiresAt ? new Date(job.leaseExpiresAt).getTime() > now : false;
     const recentlyUpdated = now - new Date(job.updatedAt).getTime() <= 10 * 60_000;
     return leaseActive || recentlyUpdated;
