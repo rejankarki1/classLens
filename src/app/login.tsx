@@ -7,6 +7,7 @@ import { ThemedText } from '@/components/themed-text';
 import { PasswordField } from '@/components/ui/PasswordField';
 import { Screen } from '@/components/ui/Screen';
 import { Brand, Fonts } from '@/constants/theme';
+import { PASSWORD_RECOVERY_ENABLED } from '@/constants/featureFlags';
 import { useTheme } from '@/hooks/use-theme';
 import { signIn } from '@/services/auth';
 
@@ -120,15 +121,17 @@ export default function LoginScreen() {
           : <ThemedText style={[styles.actionText, { color: dark ? Brand.ink : '#FFFFFF' }]}>Sign in</ThemedText>}
       </Pressable>
 
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel="Forgot password"
-        disabled={busy}
-        onPress={() => router.push('/forgot-password' as never)}
-        style={({ pressed }) => [styles.textAction, pressed && styles.dim]}
-      >
-        <ThemedText style={[styles.textActionLabel, { color: theme.text }]}>Forgot password?</ThemedText>
-      </Pressable>
+      {PASSWORD_RECOVERY_ENABLED ? (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Forgot password"
+          disabled={busy}
+          onPress={() => router.push('/forgot-password' as never)}
+          style={({ pressed }) => [styles.textAction, pressed && styles.dim]}
+        >
+          <ThemedText style={[styles.textActionLabel, { color: theme.text }]}>Forgot password?</ThemedText>
+        </Pressable>
+      ) : null}
 
       <Pressable
         accessibilityRole="button"

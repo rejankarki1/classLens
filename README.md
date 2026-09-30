@@ -187,6 +187,11 @@ password-recovery delivery, then disable email autoconfirm in Supabase. The Rese
 Password template must include `{{ .Token }}` so the app can verify its six-digit
 recovery code without mobile deep links.
 
+Password recovery is hidden in the pilot build because the default Supabase SMTP
+provider does not allow that custom template. After custom SMTP is configured,
+set the email OTP length to six, install and verify the token template, and build
+with `EXPO_PUBLIC_PASSWORD_RECOVERY_ENABLED=true` to show “Forgot password?”.
+
 ### Run the App
 
 ```bash
