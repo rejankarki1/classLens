@@ -14,6 +14,8 @@ import {
   useState,
 } from 'react';
 
+import * as Haptics from 'expo-haptics';
+
 import Svg, { Circle } from 'react-native-svg';
 
 import {
@@ -29,7 +31,7 @@ type MainRoute =
   | '/catchup'
   | '/profile';
 
-const HOLD_TIME = 1000;
+const HOLD_TIME = 500;
 
 export function AppBottomNav() {
   const [sheetOpen, setSheetOpen] = useState(false);
@@ -41,6 +43,7 @@ export function AppBottomNav() {
 
   function handleLongPress() {
     longPressTriggered.current = true;
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     setSheetOpen(true);
   }
 
@@ -53,8 +56,7 @@ export function AppBottomNav() {
     router.push({
       pathname: '/capture',
       params: {
-        mode: 'photo',
-        autoOpen: 'camera',
+        source: 'camera',
       },
     });
   }
@@ -66,8 +68,7 @@ export function AppBottomNav() {
     router.push({
       pathname: '/capture',
       params: {
-        mode,
-        autoOpen: mode === 'photo' ? 'camera' : undefined,
+        source: mode === 'photo' ? 'photos' : mode,
       },
     });
   }
@@ -88,7 +89,7 @@ export function AppBottomNav() {
             <Pressable
               accessibilityRole="button"
               accessibilityLabel="ClassLens capture"
-              accessibilityHint="Tap for photo capture. Hold for one second for photo, video, audio and file options."
+              accessibilityHint="Tap for camera capture. Hold for more capture options."
               delayLongPress={HOLD_TIME}
               onPressIn={handlePressIn}
               onLongPress={handleLongPress}
@@ -157,7 +158,7 @@ export function AppBottomNav() {
           allowFontScaling={false}
           style={styles.hint}
         >
-          Tap camera · Hold 1s for more
+          Tap camera · Hold for more
         </ThemedText>
       </View>
 

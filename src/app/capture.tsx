@@ -1,5 +1,5 @@
 import { CameraView, useCameraPermissions, type CameraCapturedPicture } from 'expo-camera';
-import { router, useFocusEffect } from 'expo-router';
+import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
@@ -21,6 +21,11 @@ import {
   type CaptureSessionPhoto,
   type PhotoQualityWarning,
 } from '@/features/capture/captureSession';
+import {
+  CaptureImportError,
+  pickCapturePhotos,
+  type CaptureImportSource,
+} from '@/features/capture/captureImports';
 import { checkPhotoQuality } from '@/features/capture/photoQuality';
 import { logTiming } from '@/lib/timing';
 import { runProcessingJob } from '@/services/processingOrchestrator';
@@ -56,8 +61,14 @@ function warningMessage(warnings: PhotoQualityWarning[]): string {
 }
 
 export default function CaptureScreen() {
+  const params = useLocalSearchParams<{ source?: string | string[] }>();
+  const sourceParam = Array.isArray(params.source) ? params.source[0] : params.source;
+  const importSource: CaptureImportSource | null = sourceParam === 'photos' || sourceParam === 'file'
+    ? sourceParam
+    : null;
   const camera = useRef<CameraView>(null);
   const requestedPermission = useRef(false);
+  const requestedImport = useRef(false);
   const sequence = useRef(0);
   const pending = useRef(0);
   const sessionId = useRef(`capture-${Date.now()}`);
@@ -78,6 +89,9 @@ export default function CaptureScreen() {
   const [cameraError, setCameraError] = useState('');
   const [cameraKey, setCameraKey] = useState(0);
   const [finishing, setFinishing] = useState(false);
+  const [importing, setImporting] = useState(importSource !== null);
+  const [importError, setImportError] = useState('');
+  const [importPermissionDenied, setImportPermissionDenied] = useState(false);
 
   useEffect(() => () => {
     warningTimers.current.forEach(clearTimeout);
@@ -92,11 +106,11 @@ export default function CaptureScreen() {
   );
 
   useEffect(() => {
-    if (!permission || permission.granted || !permission.canAskAgain || requestedPermission.current) return;
+    if (importSource || !permission || permission.granted || !permission.canAskAgain || requestedPermission.current) return;
     requestedPermission.current = true;
     setRequestingPermission(true);
     void requestPermission().finally(() => setRequestingPermission(false));
-  }, [permission, requestPermission]);
+  }, [importSource, permission, requestPermission]);
 
   function updatePhotos(updater: (current: CaptureSessionPhoto[]) => CaptureSessionPhoto[]) {
     setPhotos((current) => {
@@ -119,6 +133,48 @@ export default function CaptureScreen() {
     checks.current.set(photo.id, task);
     void task.finally(() => checks.current.delete(photo.id));
   }
+
+  const importPhotos = useCallback(async () => {
+    if (!importSource) return;
+    setImporting(true);
+    setImportError('');
+    setImportPermissionDenied(false);
+    try {
+      const imported = await pickCapturePhotos(importSource, sessionId.current);
+      if (!imported) {
+        router.back();
+        return;
+      }
+
+      const capturedAt = new Date().toISOString();
+      const importedPhotos = imported.map<CaptureSessionPhoto>((photo, index) => ({
+        ...photo,
+        id: `${Date.now()}-${index + 1}`,
+        capturedAt,
+        quality: { status: 'checking', warnings: [], metrics: null },
+      }));
+      sequence.current = importedPhotos.length;
+      updatePhotos(() => importedPhotos);
+      for (const photo of importedPhotos) {
+        const task = analyzePhoto(photo);
+        checks.current.set(photo.id, task);
+        void task.finally(() => checks.current.delete(photo.id));
+      }
+    } catch (caught) {
+      setImportPermissionDenied(caught instanceof CaptureImportError && caught.code === 'permission-denied');
+      setImportError(caught instanceof Error ? caught.message : 'ClassLens could not open those images. Try again.');
+    } finally {
+      setImporting(false);
+    }
+  // These functions operate on refs/stable state setters and intentionally run only for picker retries.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [importSource]);
+
+  useEffect(() => {
+    if (!importSource || requestedImport.current) return;
+    requestedImport.current = true;
+    void importPhotos();
+  }, [importPhotos, importSource]);
 
   async function analyzePhoto(photo: CaptureSessionPhoto) {
     const start = Date.now();
@@ -225,11 +281,11 @@ export default function CaptureScreen() {
     }
   }
 
-  if (!permission || requestingPermission) {
+  if (!importSource && (!permission || requestingPermission)) {
     return <PermissionState loading />;
   }
 
-  if (!permission.granted) {
+  if (!importSource && permission && !permission.granted) {
     return (
       <PermissionState
         title="Camera access is off."
@@ -248,24 +304,26 @@ export default function CaptureScreen() {
   return (
     <SafeAreaView edges={['left', 'right', 'bottom']} style={styles.safe}>
       <View style={styles.cameraShell}>
-        <CameraView
-          key={cameraKey}
-          ref={camera}
-          style={StyleSheet.absoluteFill}
-          facing="back"
-          mode="picture"
-          active={focused && !preview}
-          onCameraReady={() => {
-            setCameraReady(true);
-            setCameraError('');
-          }}
-          onMountError={(event) => setCameraError(event.message)}
-        />
+        {!importSource ? (
+          <CameraView
+            key={cameraKey}
+            ref={camera}
+            style={StyleSheet.absoluteFill}
+            facing="back"
+            mode="picture"
+            active={focused && !preview}
+            onCameraReady={() => {
+              setCameraReady(true);
+              setCameraError('');
+            }}
+            onMountError={(event) => setCameraError(event.message)}
+          />
+        ) : null}
 
         <View pointerEvents="none" style={styles.topScrim} />
         <View style={styles.topBar}>
           <View>
-            <ThemedText style={styles.eyebrow}>RAPID CAPTURE</ThemedText>
+            <ThemedText style={styles.eyebrow}>{importSource ? 'IMPORT REVIEW' : 'RAPID CAPTURE'}</ThemedText>
             <ThemedText style={styles.counter}>{photos.length} / {MAX_CAPTURE_PHOTOS} photos</ThemedText>
           </View>
           <Pressable
@@ -280,12 +338,12 @@ export default function CaptureScreen() {
           </Pressable>
         </View>
 
-        <View style={styles.guide} pointerEvents="none">
+        {!importSource ? <View style={styles.guide} pointerEvents="none">
           <View style={[styles.corner, styles.topLeft]} />
           <View style={[styles.corner, styles.topRight]} />
           <View style={[styles.corner, styles.bottomLeft]} />
           <View style={[styles.corner, styles.bottomRight]} />
-        </View>
+        </View> : null}
 
         <View style={styles.bottomPanel}>
           {activeWarning ? (
@@ -312,6 +370,23 @@ export default function CaptureScreen() {
               <Pressable accessibilityRole="button" onPress={retryCamera} style={styles.retryButton}>
                 <ThemedText style={styles.retryText}>Retry camera</ThemedText>
               </Pressable>
+            </View>
+          ) : null}
+
+          {importError ? (
+            <View accessibilityLiveRegion="polite" style={styles.errorCard}>
+              <ThemedText style={styles.errorTitle}>Could not add images</ThemedText>
+              <ThemedText style={styles.errorBody}>{importError}</ThemedText>
+              <View style={styles.importErrorActions}>
+                <Pressable accessibilityRole="button" disabled={importing} onPress={() => void importPhotos()} style={styles.retryButton}>
+                  <ThemedText style={styles.retryText}>{importing ? 'Opening…' : 'Choose again'}</ThemedText>
+                </Pressable>
+                {importPermissionDenied ? (
+                  <Pressable accessibilityRole="button" onPress={() => void Linking.openSettings()} style={styles.retryButton}>
+                    <ThemedText style={styles.retryText}>Open Settings</ThemedText>
+                  </Pressable>
+                ) : null}
+              </View>
             </View>
           ) : null}
 
@@ -349,7 +424,20 @@ export default function CaptureScreen() {
             ) : null}
           </ScrollView>
 
-          <View style={styles.shutterRow}>
+          {importSource ? (
+            <View style={styles.importStatus}>
+              {importing ? <ActivityIndicator color="#FFFFFF" /> : null}
+              {photos.length || importing ? (
+                <ThemedText style={styles.readyText}>
+                  {importing ? 'Opening images…' : 'Review your images, then tap Done'}
+                </ThemedText>
+              ) : importError ? null : (
+                <Pressable accessibilityRole="button" onPress={() => void importPhotos()} style={styles.chooseAgainButton}>
+                  <ThemedText style={styles.retryText}>Choose images</ThemedText>
+                </Pressable>
+              )}
+            </View>
+          ) : <View style={styles.shutterRow}>
             <View style={styles.shutterSide}>
               <ThemedText style={styles.limitText}>{atLimit ? 'Six-photo limit reached' : 'Camera stays ready'}</ThemedText>
             </View>
@@ -366,7 +454,7 @@ export default function CaptureScreen() {
             <View style={[styles.shutterSide, styles.rightStatus]}>
               {!cameraReady && !cameraError ? <ActivityIndicator color="#FFFFFF" /> : <ThemedText style={styles.readyText}>{taking ? 'Saving…' : checking ? 'Checking…' : 'Ready'}</ThemedText>}
             </View>
-          </View>
+          </View>}
         </View>
       </View>
 
@@ -380,7 +468,7 @@ export default function CaptureScreen() {
           ) : null}
           <View style={styles.previewActions}>
             <Pressable accessibilityRole="button" onPress={() => setPreview(null)} style={styles.previewButton}>
-              <ThemedText style={styles.previewButtonText}>Back to camera</ThemedText>
+              <ThemedText style={styles.previewButtonText}>{importSource ? 'Back to photos' : 'Back to camera'}</ThemedText>
             </Pressable>
             {preview ? (
               <Pressable accessibilityRole="button" accessibilityLabel="Remove this photo" onPress={() => removePhoto(preview.id)} style={[styles.previewButton, styles.removeButton]}>
@@ -460,6 +548,9 @@ const styles = StyleSheet.create({
   errorBody: { color: '#7D3333', fontSize: 13, lineHeight: 18 },
   retryButton: { minHeight: 38, alignItems: 'center', justifyContent: 'center', marginTop: 4, borderRadius: 12, backgroundColor: '#7D3333' },
   retryText: { color: '#FFFFFF', fontWeight: '700' },
+  importErrorActions: { gap: 8 },
+  importStatus: { minHeight: 62, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10, paddingHorizontal: 18 },
+  chooseAgainButton: { minHeight: 42, paddingHorizontal: 20, alignItems: 'center', justifyContent: 'center', borderRadius: 12, backgroundColor: Brand.forest },
   warningCard: { marginHorizontal: 16, gap: 12, padding: 14, borderRadius: 16, backgroundColor: '#FFF4DF' },
   warningCopy: { gap: 3 },
   warningTitle: { color: '#714313', fontSize: 15, fontWeight: '800' },

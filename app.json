@@ -64,6 +64,12 @@
           "recordAudioAndroid": false,
           "barcodeScannerEnabled": false
         }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Allow ClassLens to choose photos of class material."
+        }
       ]
     ],
     "experiments": {

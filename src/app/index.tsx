@@ -241,7 +241,11 @@ export default function HomeScreen() {
           <View style={styles.captureModes}>
             <CaptureMode icon="▣" title="Photo" />
             <CaptureMode icon="◉" title="Audio" muted />
-            <CaptureMode icon="↥" title="File" muted />
+            <CaptureMode
+              icon="↥"
+              title="File"
+              onPress={() => router.push({ pathname: '/capture', params: { source: 'file' } })}
+            />
           </View>
         </View>
 
@@ -523,13 +527,15 @@ function CaptureMode({
   icon,
   title,
   muted = false,
+  onPress,
 }: {
   icon: string;
   title: string;
   muted?: boolean;
+  onPress?: () => void;
 }) {
-  return (
-    <View style={[styles.modeCard, muted && styles.modeMuted]}>
+  const content = (
+    <>
       <ThemedText style={styles.modeIcon}>{icon}</ThemedText>
 
       <ThemedText style={styles.modeTitle}>{title}</ThemedText>
@@ -539,8 +545,23 @@ function CaptureMode({
       ) : (
         <ThemedText style={styles.modeReady}>READY</ThemedText>
       )}
-    </View>
+    </>
   );
+
+  if (onPress) {
+    return (
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={`Choose ${title.toLowerCase()}`}
+        onPress={onPress}
+        style={({ pressed }) => [styles.modeCard, pressed && styles.capturePressed]}
+      >
+        {content}
+      </Pressable>
+    );
+  }
+
+  return <View style={[styles.modeCard, muted && styles.modeMuted]}>{content}</View>;
 }
 
 function MenuItem({
