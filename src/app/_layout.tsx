@@ -16,7 +16,7 @@ import { StatusBar } from 'expo-status-bar';
 
 import { useTheme } from '@/hooks/use-theme';
 import { Brand } from '@/constants/theme';
-import { getCurrentUserId, getMyProfile, onAuthChange, onProfileChange } from '@/services/auth';
+import { getCurrentUserId, getMyProfile, getPendingSignupEmail, onAuthChange, onProfileChange } from '@/services/auth';
 import { hasEnrolledCourses, onEnrollmentChange } from '@/services/enrollment';
 import { registerProcessingBackgroundTask, unregisterProcessingBackgroundTask } from '@/services/processingBackground';
 import { resumeProcessingJobs } from '@/services/processingOrchestrator';
@@ -25,6 +25,7 @@ import { sweepLocalOriginals } from '@/services/originalsCleanupSweep';
 import { registerDeviceToken } from '@/services/pushTokens';
 
 const authRoutes = ['login', 'signup'];
+const recoveryRoutes = ['forgot-password', 'reset-password'];
 
 /**
  * Session-based gate: signed out goes to login, signed in without a completed
@@ -98,11 +99,17 @@ function useAuthGate() {
 
     const section: string = segments[0] ?? '';
     const inAuth = authRoutes.includes(section);
+    const inRecovery = recoveryRoutes.includes(section);
     const inOnboarding = section === 'onboarding';
     const inCourseOnboarding = section === 'course-onboarding';
 
     if (!userId) {
-      if (!inAuth) router.replace('/login');
+      if (!inAuth && section !== 'forgot-password') {
+        router.replace(getPendingSignupEmail() ? '/signup' : '/login');
+      }
+    } else if (inRecovery) {
+      // Recovery-code verification creates a temporary authenticated session.
+      // Keep it on the password screen until the new password is saved.
     } else if (hasProfile === false) {
       if (!inOnboarding) router.replace('/onboarding');
     } else if (hasEnrollment === false) {
@@ -312,6 +319,9 @@ export default function RootLayout() {
           name="privacy"
           options={{ title: 'Privacy & deletion' }}
         />
+
+        <Stack.Screen name="forgot-password" options={{ title: 'Forgot password' }} />
+        <Stack.Screen name="reset-password" options={{ title: 'Set new password' }} />
       </Stack>
     </ThemeProvider>
   );

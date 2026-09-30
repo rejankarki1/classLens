@@ -1,11 +1,14 @@
+import 'expo-sqlite/localStorage/install';
+
 import { getDataMode } from '@/lib/dataMode';
 import type { Profile, ProfileInput } from '@/types';
 
 const profileColumns = 'id, name, year, major';
 const demoIdKey = 'classlens.demo-profile-id';
+const pendingSignupEmailKey = 'classlens.pending-signup-email';
 
-function localStore(): { getItem(key: string): string | null; setItem(key: string, value: string): void } | null {
-  const store = (globalThis as { localStorage?: { getItem(key: string): string | null; setItem(key: string, value: string): void } }).localStorage;
+function localStore(): Pick<Storage, 'getItem' | 'setItem' | 'removeItem'> | null {
+  const store = (globalThis as { localStorage?: Storage }).localStorage;
   return store ?? null;
 }
 
@@ -69,6 +72,14 @@ export type SignUpResult = {
   requiresEmailConfirmation: boolean;
 };
 
+export function getPendingSignupEmail(): string | null {
+  return localStore()?.getItem(pendingSignupEmailKey) ?? null;
+}
+
+export function clearPendingSignupEmail(): void {
+  localStore()?.removeItem(pendingSignupEmailKey);
+}
+
 export async function signUp(email: string, password: string): Promise<SignUpResult> {
   requireSupabase('Sign up');
   const address = email.trim();
@@ -78,7 +89,20 @@ export async function signUp(email: string, password: string): Promise<SignUpRes
   const { supabase } = await import('@/lib/supabase');
   const { data, error } = await supabase.auth.signUp({ email: address, password });
   if (error) throw new Error(error.message);
-  return { requiresEmailConfirmation: !data.session };
+  const requiresEmailConfirmation = !data.session;
+  if (requiresEmailConfirmation) localStore()?.setItem(pendingSignupEmailKey, address);
+  else clearPendingSignupEmail();
+  return { requiresEmailConfirmation };
+}
+
+export async function resendSignupEmail(email: string): Promise<void> {
+  requireSupabase('Resending confirmation email');
+  const address = email.trim();
+  if (!address) throw new Error('Email is required.');
+  const { supabase } = await import('@/lib/supabase');
+  const { error } = await supabase.auth.resend({ type: 'signup', email: address });
+  if (error) throw new Error(error.message);
+  localStore()?.setItem(pendingSignupEmailKey, address);
 }
 
 export async function signIn(email: string, password: string): Promise<void> {
@@ -89,16 +113,67 @@ export async function signIn(email: string, password: string): Promise<void> {
   const { supabase } = await import('@/lib/supabase');
   const { error } = await supabase.auth.signInWithPassword({ email: address, password });
   if (error) throw new Error(error.message);
+  clearPendingSignupEmail();
+}
+
+export async function requestPasswordRecovery(email: string): Promise<string> {
+  requireSupabase('Password recovery');
+  const address = email.trim();
+  if (!address) throw new Error('Email is required.');
+  const { supabase } = await import('@/lib/supabase');
+  const { error } = await supabase.auth.resetPasswordForEmail(address);
+  if (error) throw new Error(error.message);
+  return address;
+}
+
+export async function verifyPasswordRecoveryCode(email: string, token: string): Promise<void> {
+  requireSupabase('Password recovery');
+  const address = email.trim();
+  const code = token.trim();
+  if (!address || !/^\d{6}$/.test(code)) throw new Error('Enter the six-digit code from your email.');
+  const { supabase } = await import('@/lib/supabase');
+  const { error } = await supabase.auth.verifyOtp({ email: address, token: code, type: 'recovery' });
+  if (error) throw new Error(error.message);
+}
+
+export async function updateRecoveredPassword(password: string): Promise<void> {
+  requireSupabase('Updating password');
+  if (password.length < 6) throw new Error('Password must be at least 6 characters.');
+  const { supabase } = await import('@/lib/supabase');
+  const { error } = await supabase.auth.updateUser({ password });
+  if (error) throw new Error(error.message);
+  const { error: signOutError } = await supabase.auth.signOut({ scope: 'local' });
+  if (signOutError) throw new Error(signOutError.message);
 }
 
 export async function signOut(): Promise<void> {
   requireSupabase('Sign out');
+  const ownerId = await getCurrentUserId();
   const { removeMyDeviceTokens } = await import('./pushTokens');
+  const { removeStagedCapturesForOwner } = await import('./processingLocal');
   // Removal needs a live session for RLS, so it must run before signOut clears it.
   await removeMyDeviceTokens().catch(() => undefined);
+  if (ownerId) removeStagedCapturesForOwner(ownerId);
   const { supabase } = await import('@/lib/supabase');
   const { error } = await supabase.auth.signOut();
   if (error) throw new Error(error.message);
+}
+
+export async function deleteAccount(): Promise<void> {
+  requireSupabase('Account deletion');
+  const { supabase } = await import('@/lib/supabase');
+  const { data: { session } } = await supabase.auth.getSession();
+  const ownerId = session?.user.id;
+  if (!ownerId) throw new Error('Sign in again before deleting your account.');
+
+  const { error } = await supabase.functions.invoke('delete-account', { method: 'POST' });
+  if (error) throw new Error(error.message || 'Your account could not be deleted.');
+
+  const { removeStagedCapturesForOwner } = await import('./processingLocal');
+  removeStagedCapturesForOwner(ownerId);
+  clearPendingSignupEmail();
+  const { error: signOutError } = await supabase.auth.signOut({ scope: 'local' });
+  if (signOutError) throw new Error(signOutError.message);
 }
 
 /** Null means onboarding has not been completed yet. */

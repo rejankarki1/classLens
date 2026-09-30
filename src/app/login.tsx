@@ -122,6 +122,16 @@ export default function LoginScreen() {
 
       <Pressable
         accessibilityRole="button"
+        accessibilityLabel="Forgot password"
+        disabled={busy}
+        onPress={() => router.push('/forgot-password' as never)}
+        style={({ pressed }) => [styles.textAction, pressed && styles.dim]}
+      >
+        <ThemedText style={[styles.textActionLabel, { color: theme.text }]}>Forgot password?</ThemedText>
+      </Pressable>
+
+      <Pressable
+        accessibilityRole="button"
         accessibilityLabel="Create an account"
         disabled={busy}
         onPress={() => router.replace('/signup')}
@@ -152,5 +162,7 @@ const styles = StyleSheet.create({
   error: { fontSize: 14, lineHeight: 21 },
   action: { minHeight: 54, borderRadius: 17, alignItems: 'center', justifyContent: 'center' },
   actionText: { fontWeight: '700' },
+  textAction: { minHeight: 44, alignItems: 'center', justifyContent: 'center' },
+  textActionLabel: { fontWeight: '700' },
   dim: { opacity: 0.6 },
 });

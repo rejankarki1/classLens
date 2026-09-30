@@ -78,3 +78,26 @@ export function removeStagedJobDirectory(jobId: string): void {
   if (directory.exists) directory.delete();
   store().removeItem(`${keyPrefix}${jobId}`);
 }
+
+/** Removes only the signed-in owner's durable capture staging on sign-out. */
+export function removeStagedCapturesForOwner(ownerId: string): void {
+  if (!ownerId) return;
+  const storage = store();
+  const keys: string[] = [];
+  for (let index = 0; index < storage.length; index += 1) {
+    const key = storage.key(index);
+    if (key?.startsWith(keyPrefix)) keys.push(key);
+  }
+
+  for (const key of keys) {
+    const raw = storage.getItem(key);
+    if (!raw) continue;
+    try {
+      const session = JSON.parse(raw) as Partial<StagedCaptureSession>;
+      if (session.ownerId !== ownerId) continue;
+      removeStagedJobDirectory(key.slice(keyPrefix.length));
+    } catch {
+      // An unreadable entry cannot be attributed safely; leave it untouched.
+    }
+  }
+}

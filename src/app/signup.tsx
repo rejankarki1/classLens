@@ -1,5 +1,5 @@
 import { router } from 'expo-router';
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, TextInput, View } from 'react-native';
 
 import { ClassLensLogo } from '@/components/ClassLensLogo';
@@ -9,7 +9,12 @@ import { PasswordField } from '@/components/ui/PasswordField';
 import { Screen } from '@/components/ui/Screen';
 import { Brand, Fonts } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
-import { signUp } from '@/services/auth';
+import {
+  clearPendingSignupEmail,
+  getPendingSignupEmail,
+  resendSignupEmail,
+  signUp,
+} from '@/services/auth';
 
 export default function SignupScreen() {
   const theme = useTheme();
@@ -19,7 +24,14 @@ export default function SignupScreen() {
   const passwordRef = useRef<TextInput>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
-  const [confirmationEmail, setConfirmationEmail] = useState<string | null>(null);
+  const [confirmationEmail, setConfirmationEmail] = useState<string | null>(() => getPendingSignupEmail());
+  const [resendSeconds, setResendSeconds] = useState(0);
+
+  useEffect(() => {
+    if (resendSeconds <= 0) return;
+    const timer = setTimeout(() => setResendSeconds((current) => Math.max(0, current - 1)), 1000);
+    return () => clearTimeout(timer);
+  }, [resendSeconds]);
 
   const ready = email.trim().length > 0 && password.length > 0;
 
@@ -35,6 +47,20 @@ export default function SignupScreen() {
       // With an active session, the root layout handles navigation.
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : 'Could not create your account.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function resend() {
+    if (!confirmationEmail || busy || resendSeconds > 0) return;
+    setBusy(true);
+    setError('');
+    try {
+      await resendSignupEmail(confirmationEmail);
+      setResendSeconds(60);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'Could not resend the confirmation email.');
     } finally {
       setBusy(false);
     }
@@ -61,7 +87,23 @@ export default function SignupScreen() {
           </ThemedText>
         </View>
 
+        {error ? <ThemedText accessibilityLiveRegion="polite" style={styles.error}>{error}</ThemedText> : null}
+
+        <AppButton
+          title={resendSeconds > 0 ? `Resend available in ${resendSeconds}s` : busy ? 'Sending…' : 'Resend email'}
+          disabled={busy || resendSeconds > 0}
+          onPress={resend}
+        />
         <AppButton title="Go to sign in" onPress={() => router.replace('/login')} />
+        <AppButton
+          secondary
+          title="Use a different email"
+          onPress={() => {
+            clearPendingSignupEmail();
+            setConfirmationEmail(null);
+            setError('');
+          }}
+        />
       </Screen>
     );
   }

@@ -26,7 +26,7 @@ export default function PrivacyScreen() {
         Once a captured lecture is filed, ClassLens automatically deletes the original
         photos from storage 7 days later. This only removes the ability to re-run
         analysis on that image or visually review the original page. It does not delete
-        anything else: your notebook's saved text, corrections, summaries, key concepts,
+        anything else: your notebook&apos;s saved text, corrections, summaries, key concepts,
         and citations all stay exactly as they were.
       </Section>
 
@@ -37,12 +37,13 @@ export default function PrivacyScreen() {
         photo.
       </Section>
 
-      <Section title="Deleting a lecture or your account is a separate, explicit action">
-        If you ever want a lecture notebook or your entire account removed, that only
-        happens at your explicit request — never automatically, and never as a side
-        effect of the 7-day image cleanup above. When it happens, deleting a lecture
-        removes its captures, saved analysis, corrections, and quiz history together;
-        deleting your account removes everything tied to it the same way.
+      <Section title="Account deletion is separate and permanent">
+        Profile → Delete account requires you to type DELETE. ClassLens then removes
+        your profile, friendships, enrollments, owned notebooks, capture and analysis
+        records, corrections, quiz history, processing history, push tokens, identifiable
+        account-owned Storage files, and finally your sign-in account. Your staged capture
+        files on this device are also removed. Shared catalog courses and another student&apos;s
+        independently owned CatchUp copy are not your account data and remain.
       </Section>
     </Screen>
   );

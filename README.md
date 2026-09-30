@@ -175,6 +175,18 @@ EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY=your_supabase_publishable_key
 
 > **⚠️ Do not commit `.env.local` or any secret keys.**
 
+### Production email authentication
+
+The pilot project intentionally keeps Supabase email autoconfirm enabled because
+the built-in SMTP service is rate-limited and should not gate judge access. The
+app still preserves the pending “Check your email” state and supports resending
+confirmation mail for environments where confirmation is enabled.
+
+Before production, configure a custom SMTP provider, verify confirmation and
+password-recovery delivery, then disable email autoconfirm in Supabase. The Reset
+Password template must include `{{ .Token }}` so the app can verify its six-digit
+recovery code without mobile deep links.
+
 ### Run the App
 
 ```bash

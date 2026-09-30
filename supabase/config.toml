@@ -23,3 +23,7 @@ entrypoint = "./functions/process-job/index.ts"
 [functions.cleanup-originals]
 verify_jwt = false
 entrypoint = "./functions/cleanup-originals/index.ts"
+
+[functions.delete-account]
+verify_jwt = true
+entrypoint = "./functions/delete-account/index.ts"
