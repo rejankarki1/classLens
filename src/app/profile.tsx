@@ -13,7 +13,6 @@ import {
 
 import { ClassLensLogo } from '@/components/ClassLensLogo';
 import { ThemedText } from '@/components/themed-text';
-import { StatusBadge } from '@/components/ui/Editorial';
 import { Screen } from '@/components/ui/Screen';
 
 import { Brand, Fonts } from '@/constants/theme';
@@ -23,12 +22,16 @@ import { getInitials } from '@/features/profile/initials';
 import { deleteAccount, getCurrentUserEmail, getMyProfile, signOut } from '@/services/auth';
 import { getProcessingNotificationPermission, requestProcessingNotificationPermission, type ProcessingNotificationPermission } from '@/services/processingNotifications';
 import { registerDeviceToken } from '@/services/pushTokens';
+import { hasProEntitlement, presentProPaywall, restoreProPurchases } from '@/services/purchases';
 import type { Profile } from '@/types';
 
 export default function ProfileScreen() {
   const [profile, setProfile] = useState<Profile | null>(null);
   const [email, setEmail] = useState('');
   const [notifications, setNotifications] = useState<ProcessingNotificationPermission>({ enabled: false, canAskAgain: true });
+  const [isPro, setIsPro] = useState(false);
+  const [purchaseBusy, setPurchaseBusy] = useState(false);
+  const [purchaseError, setPurchaseError] = useState('');
   const [refreshing, setRefreshing] = useState(false);
   const [signingOut, setSigningOut] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
@@ -39,14 +42,16 @@ export default function ProfileScreen() {
   const load = useCallback(async (pull = false) => {
     if (pull) setRefreshing(true);
     try {
-      const [nextProfile, nextEmail, permission] = await Promise.allSettled([
+      const [nextProfile, nextEmail, permission, pro] = await Promise.allSettled([
         getMyProfile(),
         getCurrentUserEmail(),
         getProcessingNotificationPermission(),
+        hasProEntitlement(),
       ]);
       if (nextProfile.status === 'fulfilled') setProfile(nextProfile.value);
       if (nextEmail.status === 'fulfilled') setEmail(nextEmail.value ?? '');
       if (permission.status === 'fulfilled') setNotifications(permission.value);
+      setIsPro(pro.status === 'fulfilled' && pro.value);
     } finally {
       if (pull) setRefreshing(false);
     }
@@ -69,6 +74,19 @@ export default function ProfileScreen() {
   async function contactSupport() {
     const subject = encodeURIComponent('ClassLens help & feedback');
     await Linking.openURL(`mailto:${SUPPORT_EMAIL}?subject=${subject}`);
+  }
+
+  async function managePro(restore = false) {
+    if (purchaseBusy) return;
+    setPurchaseBusy(true);
+    setPurchaseError('');
+    try {
+      const active = restore ? await restoreProPurchases() : await presentProPaywall();
+      setIsPro(active);
+      if (restore && !active) setPurchaseError('No active ClassLens Pro purchase was found.');
+    } catch (caught) {
+      setPurchaseError(caught instanceof Error ? caught.message : 'Purchases are unavailable. Please try again.');
+    } finally { setPurchaseBusy(false); }
   }
 
   async function leave() {
@@ -99,7 +117,6 @@ export default function ProfileScreen() {
     <Screen showBottomNav refreshing={refreshing} onRefresh={() => void load(true)}>
       <View style={styles.header}>
         <ClassLensLogo compact />
-        <StatusBadge label="PROFILE" />
       </View>
 
       <View style={styles.profileHeader}>
@@ -118,6 +135,10 @@ export default function ProfileScreen() {
 
       <ProfileRow label="CLASSIFICATION" value={profile?.year ?? 'Not selected'} />
       <ProfileRow label="MAJOR" value={profile?.major ?? 'Not added'} />
+      <ProfileRow label="MEMBERSHIP" value={isPro ? 'ClassLens Pro ✓' : 'ClassLens Free'} />
+      {!isPro ? <SettingRow title={purchaseBusy ? 'Opening Pro…' : 'Upgrade to ClassLens Pro'} onPress={() => void managePro()} /> : null}
+      <SettingRow title="Restore Purchases" onPress={() => void managePro(true)} />
+      {purchaseError ? <ThemedText accessibilityLiveRegion="polite" style={styles.deleteError}>{purchaseError}</ThemedText> : null}
       <View style={styles.settings}>
         <ThemedText style={styles.sectionTitle}>
           Preferences
@@ -264,11 +285,11 @@ function SettingRow({
 
 const styles = StyleSheet.create({
   signOut: {
-    color: '#A14E4E',
+    color: '#F3C7C7',
     fontWeight: '700',
   },
 
-  deleteAccount: { color: '#8C2F2F', fontWeight: '800' },
+  deleteAccount: { color: '#F3C7C7', fontWeight: '800' },
   modalBackdrop: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24, backgroundColor: 'rgba(9,23,17,0.66)' },
   deleteCard: { width: '100%', maxWidth: 460, gap: 16, padding: 22, borderRadius: 24, backgroundColor: '#F7F6F0' },
   deleteTitle: { color: Brand.ink, fontFamily: Fonts.serif },
@@ -320,16 +341,17 @@ const styles = StyleSheet.create({
   profileRow: {
     padding: 18,
     borderRadius: 20,
-    backgroundColor: '#ECEFE8',
+    backgroundColor: Brand.forest,
     gap: 6,
   },
 
   label: {
     letterSpacing: 1,
+    color: '#B9CEBF',
   },
 
   value: {
-    color: Brand.ink,
+    color: '#FFFFFF',
     fontSize: 17,
     fontWeight: '600',
   },
@@ -348,24 +370,22 @@ const styles = StyleSheet.create({
     minHeight: 58,
     paddingHorizontal: 16,
     borderRadius: 18,
-    backgroundColor: '#FFFFFF',
-    borderWidth: 1,
-    borderColor: '#E5E8E2',
+    backgroundColor: Brand.forest,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
   },
 
   settingTitle: {
-    color: Brand.ink,
+    color: '#FFFFFF',
     fontWeight: '600',
   },
 
   settingAction: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  settingValue: { color: Brand.forest, fontSize: 13, fontWeight: '700' },
+  settingValue: { color: Brand.lime, fontSize: 13, fontWeight: '700' },
 
   chevron: {
-    color: Brand.forest,
+    color: Brand.lime,
     fontSize: 25,
   },
 

@@ -243,13 +243,13 @@ export default function CatchUpScreen() {
 
       {loading ? (
         <View style={styles.loadingCard}>
-          <ActivityIndicator color={Brand.forest} accessibilityLabel="Checking what you missed" />
+          <ActivityIndicator color={Brand.lime} accessibilityLabel="Checking what you missed" />
           <ThemedText style={styles.loadingTitle}>
             Checking what you missed...
           </ThemedText>
 
           <ThemedText
-            style={styles.onCardMuted}
+            style={styles.loadingMuted}
           >
             Looking for shared notes from your courses.
           </ThemedText>
@@ -261,7 +261,7 @@ export default function CatchUpScreen() {
           </ThemedText>
 
           <ThemedText
-            style={styles.onCardMuted}
+            style={styles.loadingMuted}
           >
             We couldn&apos;t load your CatchUp information.
           </ThemedText>
@@ -282,9 +282,9 @@ export default function CatchUpScreen() {
             setSheetOpen(true)
           }
         />
-      ) : (
-        <CatchUpEmptyState />
-      )}
+      ) : friends.length ? (
+        <CatchUpEmptyState friendCount={friends.length} />
+      ) : null}
 
       <View style={styles.howItWorks}>
         <ThemedText style={styles.howTitle}>
@@ -332,15 +332,17 @@ export default function CatchUpScreen() {
   );
 }
 
-function CatchUpEmptyState() {
+function CatchUpEmptyState({ friendCount }: { friendCount: number }) {
   return (
     <View style={styles.loadingCard}>
       <ThemedText style={styles.loadingTitle}>
-        Add classmates to see their shared notes.
+        Nothing to catch up on yet.
       </ThemedText>
 
-      <ThemedText style={styles.onCardMuted}>
-        Accepted classmates and their latest notes will appear here.
+      <ThemedText style={styles.loadingMuted}>
+        {friendCount === 1
+          ? 'Your classmate hasn’t shared any notes yet.'
+          : 'Your classmates haven’t shared any notes yet.'}
       </ThemedText>
     </View>
   );
@@ -833,17 +835,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: 15,
     paddingVertical: 14,
     borderRadius: 20,
-    backgroundColor: '#FFFFFF',
-    borderWidth: 1,
-    borderColor: '#E0E5DE',
-    shadowColor: '#183E2A',
-    shadowOpacity: 0.05,
-    shadowRadius: 10,
-    shadowOffset: {
-      width: 0,
-      height: 4,
-    },
-    elevation: 2,
+    backgroundColor: Brand.forest,
+    boxShadow: '0px 4px 14px rgba(0,0,0,0.18)',
   },
 
   friendCardPressed: {
@@ -856,7 +849,7 @@ const styles = StyleSheet.create({
     height: 46,
     flexShrink: 0,
     borderRadius: 15,
-    backgroundColor: '#EDF3EC',
+    backgroundColor: 'rgba(255,255,255,0.14)',
     alignItems: 'center',
     justifyContent: 'center',
     position: 'relative',
@@ -876,7 +869,7 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     backgroundColor: '#C4A66A',
     borderWidth: 2,
-    borderColor: '#FFFFFF',
+    borderColor: Brand.forest,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -895,14 +888,14 @@ const styles = StyleSheet.create({
   },
 
   friendTitle: {
-    color: '#183E2A',
+    color: '#FFFFFF',
     fontSize: 15,
     lineHeight: 20,
     fontWeight: '800',
   },
 
   friendDescription: {
-    color: onCardMuted,
+    color: '#DCE7DA',
     flexShrink: 1,
     fontSize: 11,
     lineHeight: 16,
@@ -913,13 +906,13 @@ const styles = StyleSheet.create({
     height: 34,
     flexShrink: 0,
     borderRadius: 17,
-    backgroundColor: '#183E2A',
+    backgroundColor: Brand.lime,
     alignItems: 'center',
     justifyContent: 'center',
   },
 
   friendActionText: {
-    color: '#FFFFFF',
+    color: Brand.ink,
     fontSize: 20,
     lineHeight: 22,
     fontWeight: '500',
@@ -929,14 +922,18 @@ const styles = StyleSheet.create({
     width: '100%',
     padding: 18,
     borderRadius: 19,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: Brand.forest,
     gap: 6,
   },
 
   loadingTitle: {
-    color: onCard,
+    color: '#FFFFFF',
     fontSize: 17,
     fontWeight: '700',
+  },
+
+  loadingMuted: {
+    color: '#DCE7DA',
   },
 
   retryButton: {
@@ -946,11 +943,11 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     justifyContent: 'center',
     borderRadius: 12,
-    backgroundColor: Brand.forest,
+    backgroundColor: Brand.lime,
   },
 
   retryText: {
-    color: '#FFFFFF',
+    color: Brand.ink,
     fontSize: 13,
     fontWeight: '800',
   },
@@ -963,16 +960,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#123F2B',
     borderWidth: 1,
     borderColor: '#2E6948',
-
-    shadowColor: '#123F2B',
-    shadowOpacity: 0.22,
-    shadowRadius: 18,
-    shadowOffset: {
-      width: 0,
-      height: 9,
-    },
-
-    elevation: 8,
+    boxShadow: '0px 9px 18px rgba(18,63,43,0.22)',
   },
 
   alertTop: {

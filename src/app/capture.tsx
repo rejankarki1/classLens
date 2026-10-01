@@ -353,7 +353,7 @@ export default function CaptureScreen() {
           />
         ) : null}
 
-        <View pointerEvents="none" style={styles.topScrim} />
+        <View style={styles.topScrim} />
         <View style={styles.topBar}>
           <View>
             <ThemedText style={styles.eyebrow}>{importSource ? 'IMPORT REVIEW' : 'RAPID CAPTURE'}</ThemedText>
@@ -371,7 +371,7 @@ export default function CaptureScreen() {
           </Pressable>
         </View>
 
-        {!importSource ? <View style={styles.guide} pointerEvents="none">
+        {!importSource ? <View style={styles.guide}>
           <View style={[styles.corner, styles.topLeft]} />
           <View style={[styles.corner, styles.topRight]} />
           <View style={[styles.corner, styles.bottomLeft]} />
@@ -545,13 +545,13 @@ function PermissionState({
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: '#08120E' },
   cameraShell: { flex: 1, overflow: 'hidden', backgroundColor: '#08120E' },
-  topScrim: { position: 'absolute', top: 0, left: 0, right: 0, bottom: '55%', backgroundColor: 'rgba(4,12,8,0.2)' },
+  topScrim: { position: 'absolute', top: 0, left: 0, right: 0, bottom: '55%', backgroundColor: 'rgba(4,12,8,0.2)', pointerEvents: 'none' },
   topBar: { position: 'absolute', top: 0, left: 0, right: 0, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: 18 },
   eyebrow: { color: Brand.lime, fontSize: 10, lineHeight: 14, fontWeight: '800', letterSpacing: 1.4 },
   counter: { color: '#FFFFFF', fontSize: 18, lineHeight: 24, fontWeight: '700' },
   done: { minHeight: 46, minWidth: 82, alignItems: 'center', justifyContent: 'center', borderRadius: 15, backgroundColor: Brand.lime },
   doneText: { color: Brand.ink, fontWeight: '800' },
-  guide: { position: 'absolute', top: 90, left: 24, right: 24, bottom: 245 },
+  guide: { position: 'absolute', top: 90, left: 24, right: 24, bottom: 245, pointerEvents: 'none' },
   corner: { position: 'absolute', width: 34, height: 34, borderColor: 'rgba(255,255,255,0.78)' },
   topLeft: { top: 0, left: 0, borderTopWidth: 2, borderLeftWidth: 2, borderTopLeftRadius: 8 },
   topRight: { top: 0, right: 0, borderTopWidth: 2, borderRightWidth: 2, borderTopRightRadius: 8 },

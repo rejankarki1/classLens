@@ -12,6 +12,7 @@ import {
 import {
   useRef,
   useState,
+  type ComponentType,
 } from 'react';
 
 import * as Haptics from 'expo-haptics';
@@ -23,7 +24,9 @@ import {
   CaptureModeSheet,
 } from '@/components/CaptureModeSheet';
 
+import { BookIcon, HomeIcon, PeopleIcon, PersonIcon } from '@/components/icons/NavIcons';
 import { ThemedText } from '@/components/themed-text';
+import { Brand } from '@/constants/theme';
 import { useCaptureImportLauncher } from '@/features/capture/useCaptureImportLauncher';
 
 type MainRoute =
@@ -31,6 +34,9 @@ type MainRoute =
   | '/courses'
   | '/catchup'
   | '/profile';
+
+const ACTIVE_COLOR = Brand.lime;
+const INACTIVE_COLOR = '#8C9791';
 
 const HOLD_TIME = 500;
 
@@ -79,13 +85,13 @@ export function AppBottomNav() {
     <>
       <View style={styles.wrapper}>
         <View style={styles.nav}>
-          <NavItem icon="🏠" label="Home" route="/" />
-          <NavItem icon="📚" label="Courses" route="/courses" />
+          <NavItem icon={HomeIcon} label="Home" route="/" />
+          <NavItem icon={BookIcon} label="Courses" route="/courses" />
 
           <View style={styles.centerSpace} />
 
-          <NavItem icon="🔄" label="CatchUp" route="/catchup" />
-          <NavItem icon="👤" label="Profile" route="/profile" />
+          <NavItem icon={PeopleIcon} label="CatchUp" route="/catchup" />
+          <NavItem icon={PersonIcon} label="Profile" route="/profile" />
 
           <View style={styles.capturePosition}>
             <Pressable
@@ -177,11 +183,11 @@ export function AppBottomNav() {
 }
 
 function NavItem({
-  icon,
+  icon: Icon,
   label,
   route,
 }: {
-  icon: string;
+  icon: ComponentType<{ color: string; size?: number }>;
   label: string;
   route: MainRoute;
 }) {
@@ -203,15 +209,7 @@ function NavItem({
         pressed && styles.itemPressed,
       ]}
     >
-      <ThemedText
-        allowFontScaling={false}
-        style={[
-          styles.icon,
-          active && styles.active,
-        ]}
-      >
-        {icon}
-      </ThemedText>
+      <Icon color={active ? ACTIVE_COLOR : INACTIVE_COLOR} size={22} />
 
       <ThemedText
         allowFontScaling={false}
@@ -232,28 +230,21 @@ const styles = StyleSheet.create({
   wrapper: {
     paddingHorizontal: 14,
     paddingBottom: 7,
-    backgroundColor: '#F7F6F0',
+    backgroundColor: Brand.ink,
   },
 
   nav: {
     height: 78,
     borderRadius: 27,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: '#1B3B2D',
     borderWidth: 1,
-    borderColor: '#E0E5DE',
+    borderColor: '#2F4C3E',
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-around',
     paddingHorizontal: 7,
     position: 'relative',
-    shadowColor: '#13271F',
-    shadowOpacity: 0.12,
-    shadowRadius: 20,
-    shadowOffset: {
-      width: 0,
-      height: 8,
-    },
-    elevation: 10,
+    boxShadow: '0px 8px 20px rgba(0,0,0,0.28)',
   },
 
   item: {
@@ -270,20 +261,14 @@ const styles = StyleSheet.create({
     transform: [{ scale: 0.94 }],
   },
 
-  icon: {
-    color: '#8C9791',
-    fontSize: 23,
-    lineHeight: 28,
-  },
-
   label: {
-    color: '#8C9791',
+    color: INACTIVE_COLOR,
     fontSize: 10,
     fontWeight: '600',
   },
 
   active: {
-    color: '#4A7C59',
+    color: ACTIVE_COLOR,
   },
 
   activeDot: {
@@ -316,17 +301,10 @@ const styles = StyleSheet.create({
     borderRadius: 35,
     backgroundColor: '#4A7C59',
     borderWidth: 5,
-    borderColor: '#F7F6F0',
+    borderColor: Brand.ink,
     alignItems: 'center',
     justifyContent: 'center',
-    shadowColor: '#4A7C59',
-    shadowOpacity: 0.3,
-    shadowRadius: 14,
-    shadowOffset: {
-      width: 0,
-      height: 7,
-    },
-    elevation: 14,
+    boxShadow: '0px 7px 14px rgba(74,124,89,0.3)',
   },
 
   capturePressed: {
@@ -338,7 +316,7 @@ const styles = StyleSheet.create({
   hint: {
     alignSelf: 'center',
     marginTop: 3,
-    color: '#829087',
+    color: '#93A098',
     fontSize: 8,
     fontWeight: '600',
   },

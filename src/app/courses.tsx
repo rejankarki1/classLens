@@ -20,7 +20,6 @@ import { ClassLensLogo } from '@/components/ClassLensLogo';
 import {
   EmptyState,
   SectionHeader,
-  StatusBadge,
 } from '@/components/ui/Editorial';
 
 import { Screen } from '@/components/ui/Screen';
@@ -29,11 +28,15 @@ import { ThemedText } from '@/components/themed-text';
 import { Brand, Fonts } from '@/constants/theme';
 
 import { getMyEnrolledCourses } from '@/services/enrollment';
+import { getLectures } from '@/services/lectures';
 
 import type { Course } from '@/types';
 
+type CourseStats = { count: number; lastUpdated: string | null };
+
 export default function CoursesScreen() {
   const [courses, setCourses] = useState<Course[]>([]);
+  const [stats, setStats] = useState<Record<string, CourseStats>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
   const [attempt, setAttempt] = useState(0);
@@ -46,10 +49,26 @@ export default function CoursesScreen() {
       setError(false);
 
       getMyEnrolledCourses()
-        .then((data) => {
-          if (active) {
-            setCourses(data);
-          }
+        .then(async (data) => {
+          if (!active) return;
+          setCourses(data);
+          setLoading(false);
+
+          const results = await Promise.allSettled(
+            data.map((course) => getLectures(course.id)),
+          );
+          if (!active) return;
+
+          const nextStats: Record<string, CourseStats> = {};
+          data.forEach((course, index) => {
+            const result = results[index];
+            const lectures = result.status === 'fulfilled' ? result.value : [];
+            const lastUpdated = lectures
+              .map((lecture) => lecture.createdAt)
+              .sort((a, b) => b.localeCompare(a))[0] ?? null;
+            nextStats[course.id] = { count: lectures.length, lastUpdated };
+          });
+          setStats(nextStats);
         })
         .catch(() => {
           if (active) {
@@ -72,7 +91,6 @@ export default function CoursesScreen() {
     <Screen showBottomNav>
       <View style={styles.header}>
         <ClassLensLogo compact />
-        <StatusBadge label="COURSES" />
       </View>
 
       <View style={styles.intro}>
@@ -86,14 +104,16 @@ export default function CoursesScreen() {
       </View>
 
       <View style={styles.sectionHeader}>
-        <SectionHeader
-          title="Your courses"
-          detail={
-            loading
-              ? 'Loading…'
-              : `${courses.length} course${courses.length === 1 ? '' : 's'}`
-          }
-        />
+        <View style={styles.sectionHeaderText}>
+          <SectionHeader
+            title="Your courses"
+            detail={
+              loading
+                ? 'Loading…'
+                : `${courses.length} course${courses.length === 1 ? '' : 's'}`
+            }
+          />
+        </View>
 
         <Pressable
           accessibilityRole="button"
@@ -130,6 +150,8 @@ export default function CoursesScreen() {
           <CourseCard
             key={course.id}
             course={course}
+            lectureCount={stats[course.id]?.count}
+            lastUpdated={stats[course.id]?.lastUpdated}
           />
         ))
       ) : (
@@ -193,14 +215,21 @@ const styles = StyleSheet.create({
   },
 
   sectionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
     gap: 12,
+  },
+
+  sectionHeaderText: {
+    flex: 1,
+    minWidth: 0,
   },
 
   addButton: {
     width: 46,
     height: 46,
     borderRadius: 15,
-    alignSelf: 'flex-end',
     backgroundColor: Brand.forest,
     justifyContent: 'center',
     alignItems: 'center',
