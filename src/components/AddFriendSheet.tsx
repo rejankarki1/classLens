@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import {
   ActivityIndicator,
@@ -37,6 +37,10 @@ function message(error: unknown): string {
   return error instanceof Error ? error.message : 'Something went wrong. Please try again.';
 }
 
+function profileMeta(profile: Profile): string {
+  return [profile.year, profile.major.trim()].filter(Boolean).join(' · ');
+}
+
 type Props = {
   visible: boolean;
   onClose: () => void;
@@ -49,6 +53,7 @@ export function AddFriendSheet({ visible, onClose, onChanged }: Props) {
   const { height } = useWindowDimensions();
 
   const [signedIn, setSignedIn] = useState<boolean | null>(null);
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<Profile[]>([]);
   const [states, setStates] = useState<Map<string, 'pending' | 'accepted'>>(new Map());
@@ -83,6 +88,7 @@ export function AddFriendSheet({ visible, onClose, onChanged }: Props) {
       try {
         const id = await getCurrentUserId();
         if (!active) return;
+        setCurrentUserId(id);
         setSignedIn(id !== null);
         if (id) await refresh();
       } catch {
@@ -108,6 +114,20 @@ export function AddFriendSheet({ visible, onClose, onChanged }: Props) {
     }, 300);
     return () => { active = false; clearTimeout(timer); };
   }, [query, visible, signedIn]);
+
+  const visibleResults = useMemo(() => {
+    const alreadyShown = new Set([
+      ...friends.map((friend) => friend.id),
+      ...requests.map((request) => request.from.id),
+    ]);
+    const unique = new Map<string, Profile>();
+    for (const profile of results) {
+      if (profile.id !== currentUserId && !alreadyShown.has(profile.id)) {
+        unique.set(profile.id, profile);
+      }
+    }
+    return [...unique.values()].slice(0, 20);
+  }, [currentUserId, friends, requests, results]);
 
   function close() {
     if (working) return;
@@ -270,7 +290,7 @@ export function AddFriendSheet({ visible, onClose, onChanged }: Props) {
                           <View style={styles.rowCopy}>
                             <ThemedText style={styles.rowName}>{request.from.name}</ThemedText>
                             <ThemedText style={styles.rowMeta}>
-                              {request.from.year} · {request.from.major}
+                              {profileMeta(request.from)}
                             </ThemedText>
                           </View>
 
@@ -323,7 +343,7 @@ export function AddFriendSheet({ visible, onClose, onChanged }: Props) {
                           <View style={styles.rowCopy}>
                             <ThemedText style={styles.rowName}>{friend.name}</ThemedText>
                             <ThemedText style={styles.rowMeta}>
-                              {friend.year} · {friend.major}
+                              {profileMeta(friend)}
                             </ThemedText>
                           </View>
 
@@ -339,7 +359,7 @@ export function AddFriendSheet({ visible, onClose, onChanged }: Props) {
                     <ActivityIndicator color={Brand.lime} accessibilityLabel="Searching" />
                   ) : null}
 
-                  {!searching && query.trim().length >= 2 && results.length === 0 ? (
+                  {!searching && query.trim().length >= 2 && visibleResults.length === 0 ? (
                     <ThemedText style={styles.rowMeta}>
                       No classmate found with that name.
                     </ThemedText>
@@ -351,7 +371,7 @@ export function AddFriendSheet({ visible, onClose, onChanged }: Props) {
                     </ThemedText>
                   ) : null}
 
-                  {(query.trim().length >= 2 ? results : []).map((profile) => {
+                  {(query.trim().length >= 2 ? visibleResults : []).map((profile) => {
                     const state = states.get(profile.id);
                     return (
                       <View key={profile.id} style={styles.row}>
@@ -364,7 +384,7 @@ export function AddFriendSheet({ visible, onClose, onChanged }: Props) {
                         <View style={styles.rowCopy}>
                           <ThemedText style={styles.rowName}>{profile.name}</ThemedText>
                           <ThemedText style={styles.rowMeta}>
-                            {profile.year} · {profile.major}
+                            {profileMeta(profile)}
                           </ThemedText>
                         </View>
 

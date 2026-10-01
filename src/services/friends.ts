@@ -70,7 +70,11 @@ export async function searchProfiles(query: string): Promise<Profile[]> {
     .returns<ProfileRow[]>();
 
   if (error) throw new Error(`Could not search classmates: ${error.message}`);
-  return data.map(toProfile);
+  return [...new Map(data
+    .filter((row) => row.id !== id)
+    .map((row) => [row.id, toProfile(row)] as const))
+    .values()]
+    .slice(0, 20);
 }
 
 /** Every friendship involving the signed-in user, in either direction. */
@@ -106,9 +110,11 @@ export async function getFriends(): Promise<Profile[]> {
   const accepted = rows.filter((row) => row.status === 'accepted');
   const others = accepted.map((row) => (row.requester_id === id ? row.addressee_id : row.requester_id));
   const profiles = await profilesByIds(others);
-  return others
+  return [...new Map(others
     .map((other) => profiles.get(other))
     .filter((profile): profile is Profile => profile !== undefined && !profile.isDemo)
+    .map((profile) => [profile.id, profile] as const))
+    .values()]
     .sort((a, b) => a.name.localeCompare(b.name));
 }
 

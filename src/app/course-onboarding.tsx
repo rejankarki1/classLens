@@ -22,6 +22,7 @@ export default function CourseOnboardingScreen() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [addOpen, setAddOpen] = useState(false);
+  const canSubmit = selected.size > 0 && !saving;
 
   useEffect(() => {
     let active = true;
@@ -97,9 +98,11 @@ export default function CourseOnboardingScreen() {
                   ]}
                 >
                   <View style={styles.courseCopy}>
-                    <ThemedText style={styles.code}>{course.code}</ThemedText>
+                    <ThemedText style={[styles.code, { color: dark ? Brand.lime : Brand.forest }]}>{course.code}</ThemedText>
                     <ThemedText style={styles.name}>{course.name}</ThemedText>
-                    {course.professor ? <ThemedText type="small" themeColor="textSecondary">{course.professor}</ThemedText> : null}
+                    {course.professor.trim() && course.professor.trim().toLowerCase() !== 'unknown'
+                      ? <ThemedText type="small" themeColor="textSecondary">{course.professor}</ThemedText>
+                      : null}
                   </View>
                   <View style={[styles.check, { borderColor: active ? Brand.forest : theme.backgroundSelected }, active && styles.checkActive]}>
                     {active ? <ThemedText style={styles.checkText}>✓</ThemedText> : null}
@@ -130,9 +133,13 @@ export default function CourseOnboardingScreen() {
           accessibilityState={{ disabled: !selected.size || saving, busy: saving }}
           disabled={!selected.size || saving}
           onPress={submit}
-          style={({ pressed }) => [styles.primary, { backgroundColor: dark ? Brand.lime : Brand.forest }, (pressed || !selected.size || saving) && styles.dim]}
+          style={({ pressed }) => [
+            styles.primary,
+            { backgroundColor: canSubmit ? (dark ? Brand.lime : Brand.forest) : theme.backgroundSelected },
+            (pressed || saving) && styles.dim,
+          ]}
         >
-          {saving ? <ActivityIndicator color={dark ? Brand.ink : '#FFFFFF'} /> : <ThemedText style={[styles.actionText, { color: dark ? Brand.ink : '#FFFFFF' }]}>Enter ClassLens  →</ThemedText>}
+          {saving ? <ActivityIndicator color={dark ? Brand.ink : '#FFFFFF'} /> : <ThemedText style={[styles.actionText, { color: canSubmit ? (dark ? Brand.ink : '#FFFFFF') : theme.textSecondary }]}>Enter ClassLens  →</ThemedText>}
         </Pressable>
       </Screen>
 

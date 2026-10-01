@@ -20,6 +20,7 @@ export default function OnboardingScreen() {
   const [error, setError] = useState('');
 
   const ready = name.trim().length > 0 && year !== null && major.trim().length > 0;
+  const placeholderColor = dark ? '#82958B' : '#8B978F';
 
   async function submit() {
     Keyboard.dismiss();
@@ -63,8 +64,8 @@ export default function OnboardingScreen() {
           value={name}
           onChangeText={setName}
           editable={!busy}
-          placeholder="Alex Rivera"
-          placeholderTextColor={theme.textSecondary}
+          placeholder="Your full name"
+          placeholderTextColor={placeholderColor}
           autoCapitalize="words"
           returnKeyType="next"
           submitBehavior="submit"
@@ -124,8 +125,8 @@ export default function OnboardingScreen() {
           value={major}
           onChangeText={setMajor}
           editable={!busy}
-          placeholder="Computer Science"
-          placeholderTextColor={theme.textSecondary}
+          placeholder="e.g. Computer Science"
+          placeholderTextColor={placeholderColor}
           returnKeyType="done"
           submitBehavior="blurAndSubmit"
           onSubmitEditing={submit}
@@ -148,13 +149,13 @@ export default function OnboardingScreen() {
         onPress={submit}
         style={({ pressed }) => [
           styles.action,
-          { backgroundColor: dark ? Brand.lime : Brand.forest },
-          (pressed || !ready || busy) && styles.dim,
+          { backgroundColor: ready ? (dark ? Brand.lime : Brand.forest) : theme.backgroundSelected },
+          (pressed || busy) && styles.dim,
         ]}
       >
         {busy
           ? <ActivityIndicator color={dark ? Brand.ink : '#FFFFFF'} />
-          : <ThemedText style={[styles.actionText, { color: dark ? Brand.ink : '#FFFFFF' }]}>Enter ClassLens  →</ThemedText>}
+          : <ThemedText style={[styles.actionText, { color: ready ? (dark ? Brand.ink : '#FFFFFF') : theme.textSecondary }]}>Enter ClassLens  →</ThemedText>}
       </Pressable>
     </Screen>
   );

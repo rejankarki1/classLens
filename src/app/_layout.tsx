@@ -232,6 +232,10 @@ export default function RootLayout() {
           }}
         />
 
+        <Stack.Screen name="login" options={{ title: 'Sign in', headerShown: false }} />
+        <Stack.Screen name="signup" options={{ title: 'Create account', headerShown: false }} />
+        <Stack.Screen name="onboarding" options={{ title: 'Set up your profile', headerShown: false }} />
+
         <Stack.Screen
           name="course-onboarding"
           options={{
@@ -326,6 +330,8 @@ export default function RootLayout() {
           name="privacy"
           options={{ title: 'Privacy & deletion' }}
         />
+
+        <Stack.Screen name="inbox" options={{ title: 'Capture inbox' }} />
 
         <Stack.Screen name="forgot-password" options={{ title: 'Forgot password' }} />
         <Stack.Screen name="reset-password" options={{ title: 'Set new password' }} />

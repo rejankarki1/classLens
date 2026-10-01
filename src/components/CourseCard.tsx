@@ -6,12 +6,14 @@ import { ThemedText } from '@/components/themed-text';
 import type { Course } from '@/types';
 
 export function CourseCard({ course }: { course: Course }) {
+  const professor = course.professor.trim();
+  const showProfessor = professor.length > 0 && professor.toLowerCase() !== 'unknown';
   return <Link href={{ pathname: '/course/[id]', params: { id: course.id } }} asChild>
     <Pressable accessibilityRole="link" accessibilityLabel={`${course.code}, ${course.name}`} style={({ pressed }) => ({ opacity: pressed ? 0.7 : 1, transform: [{ scale: pressed ? 0.985 : 1 }] })}>
       <AppCard>
         <View style={styles.row}><StatusBadge label={course.code} /><ThemedText themeColor="textSecondary">↗</ThemedText></View>
         <ThemedText style={styles.title}>{course.name}</ThemedText>
-        <ThemedText type="small" themeColor="textSecondary">{course.professor}</ThemedText>
+        {showProfessor ? <ThemedText type="small" themeColor="textSecondary">{professor}</ThemedText> : null}
         <ThemedText type="smallBold">Open notebook  →</ThemedText>
       </AppCard>
     </Pressable>
