@@ -157,6 +157,26 @@ export async function getCourseNeededJobs(limit = 50): Promise<ProcessingJob[]> 
   return data.map(fromRow);
 }
 
+export async function discardProcessingJob(id: string): Promise<void> {
+  const supabase = await client();
+  const { data, error } = await supabase.rpc('discard_processing_job', { p_job_id: id });
+  if (error) throw dbError(`Could not discard this capture: ${error.message}`, error.code);
+
+  const storagePaths = Array.isArray(data)
+    ? data.filter((path): path is string => typeof path === 'string' && path.length > 0)
+    : [];
+
+  const { removeStagedJobDirectory } = await import('./processingLocal');
+  removeStagedJobDirectory(id);
+  notifyProcessingJobsChanged();
+
+  if (storagePaths.length) {
+    const removed = await supabase.storage.from('lecture-materials').remove(storagePaths);
+    if (removed.error) throw new Error(`The capture was discarded, but its photos could not be removed: ${removed.error.message}`);
+  }
+
+}
+
 type InboxEventRow = { id: string; event_type: InboxEventType; created_at: string; processing_jobs: JobRow };
 
 /** Session G: the durable inbox -- one row per completed/course_needed/terminal_failed transition. */

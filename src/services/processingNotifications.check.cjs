@@ -1,3 +1,4 @@
+/* global __dirname */
 const fs = require('node:fs');
 const path = require('node:path');
 const assert = require('node:assert/strict');
@@ -11,10 +12,11 @@ const exportsObject = {};
 let claims = 0;
 let schedules = 0;
 let permissionGranted = true;
+let canAskAgain = false;
 const notifications = {
   IosAuthorizationStatus: { PROVISIONAL: 3 },
   setNotificationHandler: () => {},
-  getPermissionsAsync: async () => ({ granted: permissionGranted, canAskAgain: false }),
+  getPermissionsAsync: async () => ({ granted: permissionGranted, canAskAgain }),
   requestPermissionsAsync: async () => ({ granted: true }),
   scheduleNotificationAsync: async () => { schedules += 1; return 'notification-id'; },
 };
@@ -30,11 +32,18 @@ vm.runInNewContext(code, {
 
 const job = { id: 'job', lectureId: 'lecture', stage: 'completed' };
 (async () => {
+  const allowed = await exportsObject.getProcessingNotificationPermission();
+  assert.equal(allowed.enabled, true);
+  assert.equal(allowed.canAskAgain, false);
   await exportsObject.notifyProcessingJob(job, 'completed');
   await exportsObject.notifyProcessingJob(job, 'completed');
   assert.equal(claims, 2);
   assert.equal(schedules, 1, 'notification event claim must deduplicate scheduling');
   permissionGranted = false;
+  canAskAgain = true;
+  const denied = await exportsObject.getProcessingNotificationPermission();
+  assert.equal(denied.enabled, false);
+  assert.equal(denied.canAskAgain, true);
   await exportsObject.notifyProcessingJob({ ...job, id: 'denied-job' }, 'failure');
   assert.equal(schedules, 1, 'denied permission must leave Home as the only recovery path');
   console.log('PASS: processing notification event deduplication.');

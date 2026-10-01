@@ -41,9 +41,12 @@ export function HomeInbox() {
   useFocusEffect(useCallback(() => {
     setFocused(true);
     refresh();
-    const off = onProcessingJobsChange(refresh);
-    return () => { setFocused(false); off(); };
+    return () => { setFocused(false); };
   }, [refresh]));
+
+  // Keep the mounted Home state synchronized even while Inbox is on top, so
+  // returning after a discard never flashes the old count.
+  useEffect(() => onProcessingJobsChange(refresh), [refresh]);
 
   useEffect(() => {
     const shouldPoll = active.some((job) => ['uploading', 'uploaded', 'analyzing', 'filing'].includes(job.stage));

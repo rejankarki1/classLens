@@ -1,3 +1,4 @@
+/* global __dirname */
 const fs = require('node:fs');
 const path = require('node:path');
 const assert = require('node:assert/strict');
@@ -8,6 +9,7 @@ const file = path.join(__dirname, 'processingJobs.ts');
 const code = ts.transpileModule(fs.readFileSync(file, 'utf8'), {
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
 }).outputText;
+const localRemoved = [];
 
 function load(supabase) {
   const serviceExports = {};
@@ -16,7 +18,10 @@ function load(supabase) {
     require: (name) => {
       if (name === 'expo-crypto') return { randomUUID: () => 'unused' };
       if (name === './auth') return { getCurrentUserId: async () => 'unused' };
-      if (name === './processingLocal') return { stageCaptureSession: async () => ({}) };
+      if (name === './processingLocal') return {
+        stageCaptureSession: async () => ({}),
+        removeStagedJobDirectory: (id) => localRemoved.push(id),
+      };
       if (name === '@/lib/supabase') return { supabase };
       throw new Error(`Unexpected import: ${name}`);
     },
@@ -140,4 +145,28 @@ function jobRow(overrides = {}) {
   assert.equal(events[1].eventType, 'course_needed');
   assert.equal(events[1].job.suggestedCourseLabel, 'CS 3358');
   console.log('PASS: getInboxEvents maps the joined job onto each event and drops rows with no joined job.');
+
+  const discardCalls = { rpc: null, removed: null };
+  const discardSupabase = {
+    rpc: async (name, values) => {
+      discardCalls.rpc = { name, values };
+      return { data: ['captures/owner-1/photo-1/photo.jpg'], error: null };
+    },
+    storage: {
+      from: (bucket) => {
+        assert.equal(bucket, 'lecture-materials');
+        return { remove: async (paths) => { discardCalls.removed = paths; return { error: null }; } };
+      },
+    },
+  };
+  const discardService = load(discardSupabase);
+  let notified = 0;
+  discardService.onProcessingJobsChange(() => { notified += 1; });
+  await discardService.discardProcessingJob('job-discard');
+  assert.equal(discardCalls.rpc.name, 'discard_processing_job');
+  assert.equal(discardCalls.rpc.values.p_job_id, 'job-discard');
+  assert.deepEqual(Array.from(discardCalls.removed), ['captures/owner-1/photo-1/photo.jpg']);
+  assert.equal(localRemoved.at(-1), 'job-discard');
+  assert.equal(notified, 1);
+  console.log('PASS: discard uses the owner-scoped RPC, removes Storage photos, clears local staging, and notifies Home.');
 })().catch((error) => { console.error(error); process.exitCode = 1; });

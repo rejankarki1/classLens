@@ -19,6 +19,19 @@ export async function requestProcessingNotificationPermission(): Promise<boolean
   const requested = await Notifications.requestPermissionsAsync({ ios: { allowAlert: true, allowBadge: false, allowSound: false } });
   return requested.granted || requested.ios?.status === Notifications.IosAuthorizationStatus.PROVISIONAL;
 }
+
+export type ProcessingNotificationPermission = {
+  enabled: boolean;
+  canAskAgain: boolean;
+};
+
+export async function getProcessingNotificationPermission(): Promise<ProcessingNotificationPermission> {
+  const status = await Notifications.getPermissionsAsync();
+  return {
+    enabled: status.granted || status.ios?.status === Notifications.IosAuthorizationStatus.PROVISIONAL,
+    canAskAgain: status.canAskAgain,
+  };
+}
 async function notificationsAllowed(): Promise<boolean> {
   const status = await Notifications.getPermissionsAsync();
   return status.granted || status.ios?.status === Notifications.IosAuthorizationStatus.PROVISIONAL;

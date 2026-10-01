@@ -273,6 +273,13 @@ export default function RootLayout() {
         />
 
         <Stack.Screen
+          name="edit-profile"
+          options={{
+            title: 'Edit profile',
+          }}
+        />
+
+        <Stack.Screen
           name="course/[id]"
           options={{
             title: 'Course workspace',

@@ -57,6 +57,8 @@ vm.runInNewContext(code, {
 
   await exportsObject.signIn('student@example.com', 'secret1');
   assert.equal(exportsObject.getPendingSignupEmail(), null);
+  session.user.email = 'student@example.com';
+  assert.equal(await exportsObject.getCurrentUserEmail(), 'student@example.com');
 
   await exportsObject.requestPasswordRecovery('student@example.com');
   await exportsObject.verifyPasswordRecoveryCode('student@example.com', '123456');

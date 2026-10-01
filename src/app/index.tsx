@@ -1,5 +1,5 @@
 import { router, useFocusEffect } from "expo-router";
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Modal, Pressable, StyleSheet, View } from "react-native";
 
 import { ClassLensBrandMark } from "@/components/ClassLensBrandMark";
@@ -17,7 +17,7 @@ import {
 import { Screen } from "@/components/ui/Screen";
 import { Brand, Fonts } from "@/constants/theme";
 import { getInitials } from "@/features/profile/initials";
-import { getMyProfile } from "@/services/auth";
+import { getMyProfile, onProfileChange } from "@/services/auth";
 import { getMyEnrolledCourses } from "@/services/enrollment";
 import { getLectures } from "@/services/lectures";
 import type { Course, Lecture, Profile } from "@/types";
@@ -36,6 +36,10 @@ export default function HomeScreen() {
   const [menuOpen, setMenuOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
   const [profile, setProfile] = useState<Profile | null>(null);
+
+  useEffect(() => onProfileChange(() => {
+    void getMyProfile().then(setProfile).catch(() => undefined);
+  }), []);
 
   useFocusEffect(
     useCallback(() => {
@@ -479,7 +483,7 @@ export default function HomeScreen() {
 
               <View style={styles.profileHeaderCopy}>
                 <ThemedText style={styles.profileTitle}>
-                  Student profile
+                  {profile?.name ?? "Student profile"}
                 </ThemedText>
 
                 <ThemedText type="small" themeColor="textSecondary">
@@ -493,7 +497,7 @@ export default function HomeScreen() {
                 CLASSIFICATION
               </ThemedText>
               <ThemedText style={styles.profileValue}>
-                Not selected yet
+                {profile?.year ?? "Not selected yet"}
               </ThemedText>
             </View>
 
@@ -501,14 +505,7 @@ export default function HomeScreen() {
               <ThemedText type="small" themeColor="textSecondary">
                 MAJOR
               </ThemedText>
-              <ThemedText style={styles.profileValue}>Not added yet</ThemedText>
-            </View>
-
-            <View style={styles.profileField}>
-              <ThemedText type="small" themeColor="textSecondary">
-                UNIVERSITY
-              </ThemedText>
-              <ThemedText style={styles.profileValue}>Not added yet</ThemedText>
+              <ThemedText style={styles.profileValue}>{profile?.major ?? "Not added yet"}</ThemedText>
             </View>
 
             <AppButton

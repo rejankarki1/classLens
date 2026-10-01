@@ -55,6 +55,14 @@ export async function getCurrentUserId(): Promise<string | null> {
   return data.session?.user.id ?? null;
 }
 
+/** Current user's Auth email for account UI; never stored in public.profiles. */
+export async function getCurrentUserEmail(): Promise<string | null> {
+  if (getDataMode() !== 'supabase') return null;
+  const { supabase } = await import('@/lib/supabase');
+  const { data } = await supabase.auth.getSession();
+  return data.session?.user.email ?? null;
+}
+
 /** Fires on sign in, sign out and token refresh so the app can re-gate. */
 export async function onAuthChange(listener: (userId: string | null) => void): Promise<() => void> {
   if (getDataMode() !== 'supabase') {

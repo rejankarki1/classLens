@@ -128,6 +128,7 @@ signUp(email, password): Promise<void>
 signIn(email, password): Promise<void>
 signOut(): Promise<void>
 getCurrentUserId(): Promise<string | null>
+getCurrentUserEmail(): Promise<string | null>
 onAuthChange(listener): Promise<() => void>
 getMyProfile(): Promise<Profile | null>
 saveMyProfile(input: ProfileInput): Promise<Profile>
@@ -139,6 +140,7 @@ sendFriendRequest(addresseeId: string): Promise<void>
 acceptFriendRequest(friendshipId: string): Promise<void>
 getLecturesByOwners(ownerIds: string[]): Promise<Lecture[]>
 copyLectureToMyNotes(lectureId: string): Promise<Lecture>
+discardProcessingJob(id: string): Promise<void>
 getCourses(): Promise<Course[]>
 getCourse(id: string): Promise<Course | null>
 createCourse(input: CreateCourseInput): Promise<Course>

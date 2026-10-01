@@ -1,9 +1,9 @@
 import { router, useFocusEffect } from 'expo-router';
 import { useCallback, useState } from 'react';
-import { Pressable, StyleSheet, View } from 'react-native';
+import { Alert, Pressable, StyleSheet, View } from 'react-native';
 
 import { Brand, Fonts } from '@/constants/theme';
-import { getCaptureAnalysisRecord, getCourseNeededJobs, chooseProcessingJobCourse } from '@/services/processingJobs';
+import { discardProcessingJob, getCaptureAnalysisRecord, getCourseNeededJobs, chooseProcessingJobCourse } from '@/services/processingJobs';
 import { processJobNow } from '@/services/processingOrchestrator';
 import type { ProcessingJob } from '@/types';
 import { AppButton } from '@/components/ui/AppButton';
@@ -26,7 +26,6 @@ export default function InboxScreen() {
   const [jobs, setJobs] = useState<ProcessingJob[]>([]);
   const [previews, setPreviews] = useState<Record<string, AnalysisPreview>>({});
   const [busyId, setBusyId] = useState<string | null>(null);
-  const [dismissed, setDismissed] = useState<Set<string>>(new Set());
   const [error, setError] = useState('');
 
   const refresh = useCallback(() => {
@@ -50,8 +49,6 @@ export default function InboxScreen() {
     refresh();
   }, [refresh]));
 
-  const visible = jobs.filter((job) => !dismissed.has(job.id));
-
   async function confirm(job: ProcessingJob) {
     if (!job.suggestedCourseId || busyId) return;
     setBusyId(job.id);
@@ -68,7 +65,33 @@ export default function InboxScreen() {
     }
   }
 
-  if (!visible.length && !error) {
+  function askToDiscard(job: ProcessingJob) {
+    if (busyId) return;
+    Alert.alert(
+      'Discard this capture?',
+      "The photo and notes won't be saved.",
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Discard', style: 'destructive', onPress: () => void discard(job) },
+      ],
+    );
+  }
+
+  async function discard(job: ProcessingJob) {
+    setJobs((current) => current.filter((candidate) => candidate.id !== job.id));
+    setBusyId(job.id);
+    setError('');
+    try {
+      await discardProcessingJob(job.id);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'Could not discard this capture.');
+      refresh();
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  if (!jobs.length && !error) {
     return <Screen><EmptyState title="Inbox is clear" description="Captures needing a course will appear here." /></Screen>;
   }
 
@@ -81,7 +104,7 @@ export default function InboxScreen() {
       </View>
       {error ? <ThemedText style={styles.error}>{error}</ThemedText> : null}
       <View style={styles.list}>
-        {visible.map((job) => {
+        {jobs.map((job) => {
           const detail = previews[job.id];
           const topic = detail?.topics.join(' · ');
           return (
@@ -97,8 +120,8 @@ export default function InboxScreen() {
                 <Pressable accessibilityRole="button" accessibilityLabel="Change course" disabled={busyId !== null} onPress={() => router.push({ pathname: '/course-resolution' as never, params: { jobId: job.id } } as never)}>
                   <ThemedText style={styles.link}>Change</ThemedText>
                 </Pressable>
-                <Pressable accessibilityRole="button" accessibilityLabel="Dismiss capture" disabled={busyId !== null} onPress={() => setDismissed((current) => new Set(current).add(job.id))}>
-                  <ThemedText style={styles.dismiss}>Dismiss</ThemedText>
+                <Pressable accessibilityRole="button" accessibilityLabel="Discard capture" disabled={busyId !== null} onPress={() => askToDiscard(job)}>
+                  <ThemedText style={styles.dismiss}>Discard</ThemedText>
                 </Pressable>
               </View>
             </View>

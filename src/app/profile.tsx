@@ -3,6 +3,7 @@ import { router, useFocusEffect } from 'expo-router';
 
 import {
   ActivityIndicator,
+  Linking,
   Modal,
   Pressable,
   StyleSheet,
@@ -16,28 +17,59 @@ import { StatusBadge } from '@/components/ui/Editorial';
 import { Screen } from '@/components/ui/Screen';
 
 import { Brand, Fonts } from '@/constants/theme';
+import { SUPPORT_EMAIL } from '@/constants/support';
 
 import { getInitials } from '@/features/profile/initials';
-import { deleteAccount, getMyProfile, signOut } from '@/services/auth';
+import { deleteAccount, getCurrentUserEmail, getMyProfile, signOut } from '@/services/auth';
+import { getProcessingNotificationPermission, requestProcessingNotificationPermission, type ProcessingNotificationPermission } from '@/services/processingNotifications';
+import { registerDeviceToken } from '@/services/pushTokens';
 import type { Profile } from '@/types';
 
 export default function ProfileScreen() {
   const [profile, setProfile] = useState<Profile | null>(null);
+  const [email, setEmail] = useState('');
+  const [notifications, setNotifications] = useState<ProcessingNotificationPermission>({ enabled: false, canAskAgain: true });
+  const [refreshing, setRefreshing] = useState(false);
   const [signingOut, setSigningOut] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleteConfirmation, setDeleteConfirmation] = useState('');
   const [deleteError, setDeleteError] = useState('');
   const [deleting, setDeleting] = useState(false);
 
-  useFocusEffect(
-    useCallback(() => {
-      let active = true;
-      getMyProfile()
-        .then((data) => { if (active) setProfile(data); })
-        .catch(() => { if (active) setProfile(null); });
-      return () => { active = false; };
-    }, [])
-  );
+  const load = useCallback(async (pull = false) => {
+    if (pull) setRefreshing(true);
+    try {
+      const [nextProfile, nextEmail, permission] = await Promise.allSettled([
+        getMyProfile(),
+        getCurrentUserEmail(),
+        getProcessingNotificationPermission(),
+      ]);
+      if (nextProfile.status === 'fulfilled') setProfile(nextProfile.value);
+      if (nextEmail.status === 'fulfilled') setEmail(nextEmail.value ?? '');
+      if (permission.status === 'fulfilled') setNotifications(permission.value);
+    } finally {
+      if (pull) setRefreshing(false);
+    }
+  }, []);
+
+  useFocusEffect(useCallback(() => { void load(); }, [load]));
+
+  async function manageNotifications() {
+    if (notifications.enabled || !notifications.canAskAgain) {
+      await Linking.openSettings();
+      return;
+    }
+    const enabled = await requestProcessingNotificationPermission().catch(() => false);
+    const permission = await getProcessingNotificationPermission().catch(() => ({ enabled: false, canAskAgain: false }));
+    setNotifications(permission);
+    if (enabled) await registerDeviceToken().catch(() => undefined);
+    else if (!permission.canAskAgain) await Linking.openSettings();
+  }
+
+  async function contactSupport() {
+    const subject = encodeURIComponent('ClassLens help & feedback');
+    await Linking.openURL(`mailto:${SUPPORT_EMAIL}?subject=${subject}`);
+  }
 
   async function leave() {
     if (signingOut) return;
@@ -64,7 +96,7 @@ export default function ProfileScreen() {
   }
 
   return (
-    <Screen showBottomNav>
+    <Screen showBottomNav refreshing={refreshing} onRefresh={() => void load(true)}>
       <View style={styles.header}>
         <ClassLensLogo compact />
         <StatusBadge label="PROFILE" />
@@ -78,33 +110,25 @@ export default function ProfileScreen() {
         </View>
 
         <View style={styles.profileCopy}>
-          <ThemedText type="title" style={styles.title}>
-            Your academic profile
-          </ThemedText>
+          <ThemedText type="title" style={styles.title}>{profile?.name ?? 'Your profile'}</ThemedText>
 
-          <ThemedText themeColor="textSecondary">
-            Personalize ClassLens around the way you learn.
-          </ThemedText>
+          <ThemedText themeColor="textSecondary">{email || 'Signed-in email unavailable'}</ThemedText>
         </View>
       </View>
 
       <ProfileRow label="CLASSIFICATION" value={profile?.year ?? 'Not selected'} />
       <ProfileRow label="MAJOR" value={profile?.major ?? 'Not added'} />
-      <ProfileRow label="UNIVERSITY" value="Not added" />
-      <ProfileRow label="GRADUATION" value="Not added" />
-
       <View style={styles.settings}>
         <ThemedText style={styles.sectionTitle}>
           Preferences
         </ThemedText>
 
-        <SettingRow title="Edit profile" />
+        <SettingRow title="Edit profile" onPress={() => router.push('/edit-profile' as never)} />
         <SettingRow title="Manage courses" onPress={() => router.push('/course-onboarding' as never)} />
         <SettingRow title="Review missed questions" onPress={() => router.push('/quiz-review' as never)} />
-        <SettingRow title="Appearance" />
-        <SettingRow title="Notifications" />
+        <SettingRow title="Notifications" value={notifications.enabled ? 'On' : 'Off'} onPress={() => void manageNotifications()} />
         <SettingRow title="Privacy" onPress={() => router.push('/privacy' as never)} />
-        <SettingRow title="Help & feedback" />
+        <SettingRow title="Help & feedback" onPress={() => void contactSupport()} />
 
         <Pressable
           accessibilityRole="button"
@@ -210,28 +234,30 @@ function ProfileRow({
 
 function SettingRow({
   title,
+  value,
   onPress,
 }: {
   title: string;
-  onPress?: () => void;
+  value?: string;
+  onPress: () => void;
 }) {
   return (
     <Pressable
       accessibilityRole="button"
-      disabled={!onPress}
       onPress={onPress}
       style={({ pressed }) => [
         styles.settingRow,
-        pressed && onPress && styles.pressed,
+        pressed && styles.pressed,
       ]}
     >
       <ThemedText style={styles.settingTitle}>
         {title}
       </ThemedText>
 
-      <ThemedText style={styles.chevron}>
-        ›
-      </ThemedText>
+      <View style={styles.settingAction}>
+        {value ? <ThemedText style={styles.settingValue}>{value}</ThemedText> : null}
+        <ThemedText style={styles.chevron}>›</ThemedText>
+      </View>
     </Pressable>
   );
 }
@@ -334,6 +360,9 @@ const styles = StyleSheet.create({
     color: Brand.ink,
     fontWeight: '600',
   },
+
+  settingAction: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  settingValue: { color: Brand.forest, fontSize: 13, fontWeight: '700' },
 
   chevron: {
     color: Brand.forest,
