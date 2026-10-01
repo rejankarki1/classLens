@@ -177,16 +177,6 @@ export default function CatchUpScreen() {
           </ThemedText>
         </View>
 
-        <View style={styles.liveBadge}>
-          <View style={styles.liveDot} />
-
-          <ThemedText
-            allowFontScaling={false}
-            style={styles.liveText}
-          >
-            LIVE
-          </ThemedText>
-        </View>
       </View>
 
       <ThemedText
@@ -227,22 +217,9 @@ export default function CatchUpScreen() {
         </View>
 
         <View style={styles.friendCopy}>
-          <View style={styles.friendTitleRow}>
-            <ThemedText style={styles.friendTitle}>
-              Add CatchUp Friend
-            </ThemedText>
-
-            <View style={styles.soonBadge}>
-              <ThemedText
-                allowFontScaling={false}
-                style={styles.soonBadgeText}
-              >
-                {friends.length
-                  ? `${friends.length} FRIEND${friends.length === 1 ? '' : 'S'}`
-                  : 'ADD'}
-              </ThemedText>
-            </View>
-          </View>
+          <ThemedText style={styles.friendTitle}>
+            Add CatchUp Friend
+          </ThemedText>
 
           <ThemedText
             type="small"
@@ -306,7 +283,7 @@ export default function CatchUpScreen() {
           }
         />
       ) : (
-        <CatchUpEmptyState onAddFriend={() => setFriendOpen(true)} />
+        <CatchUpEmptyState />
       )}
 
       <View style={styles.howItWorks}>
@@ -316,26 +293,20 @@ export default function CatchUpScreen() {
 
         <Step
           number="01"
-          title="You miss a class"
-          body="ClassLens notices there is no capture for a scheduled lecture."
+          title="Add classmates"
+          body="Search for classmates by name and send a request for them to accept."
         />
 
         <Step
           number="02"
-          title="A classmate shares notes"
-          body="Shared boards, slides, or notes become available to your course group."
+          title="Classmates capture their lectures"
+          body="Their captured lectures become notes they can share through CatchUp."
         />
 
         <Step
           number="03"
-          title="CatchUp alerts you"
-          body="Review the shared material and add it to your own notebook."
-        />
-
-        <Step
-          number="04"
-          title="ClassLens organizes it"
-          body="Your copy keeps the saved notes, concepts, and original lecture photo."
+          title="Add shared notes to your notebook"
+          body="See their notes on CatchUp and tap “Add to My Notes” to copy them into your notebook."
         />
       </View>
 
@@ -361,7 +332,7 @@ export default function CatchUpScreen() {
   );
 }
 
-function CatchUpEmptyState({ onAddFriend }: { onAddFriend: () => void }) {
+function CatchUpEmptyState() {
   return (
     <View style={styles.loadingCard}>
       <ThemedText style={styles.loadingTitle}>
@@ -371,15 +342,6 @@ function CatchUpEmptyState({ onAddFriend }: { onAddFriend: () => void }) {
       <ThemedText style={styles.onCardMuted}>
         Accepted classmates and their latest notes will appear here.
       </ThemedText>
-
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel="Add a classmate"
-        onPress={onAddFriend}
-        style={({ pressed }) => [styles.retryButton, pressed && styles.pressed]}
-      >
-        <ThemedText allowFontScaling={false} style={styles.retryText}>Add Friend</ThemedText>
-      </Pressable>
     </View>
   );
 }
@@ -856,30 +818,6 @@ const styles = StyleSheet.create({
     letterSpacing: -1,
   },
 
-  liveBadge: {
-    flexShrink: 0,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 5,
-    paddingHorizontal: 9,
-    paddingVertical: 6,
-    borderRadius: 10,
-    backgroundColor: '#E5EFE5',
-  },
-
-  liveDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: Brand.forest,
-  },
-
-  liveText: {
-    color: Brand.forest,
-    fontSize: 9,
-    fontWeight: '900',
-  },
-
   description: {
     width: '100%',
     fontSize: 14,
@@ -956,32 +894,11 @@ const styles = StyleSheet.create({
     gap: 4,
   },
 
-  friendTitleRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    alignItems: 'center',
-    gap: 7,
-  },
-
   friendTitle: {
     color: '#183E2A',
     fontSize: 15,
     lineHeight: 20,
     fontWeight: '800',
-  },
-
-  soonBadge: {
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 6,
-    backgroundColor: '#F4E9CC',
-  },
-
-  soonBadgeText: {
-    color: '#725A27',
-    fontSize: 7,
-    fontWeight: '900',
-    letterSpacing: 0.5,
   },
 
   friendDescription: {
