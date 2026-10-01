@@ -139,7 +139,8 @@ getFriendshipStates(): Promise<Map<string, 'pending' | 'accepted'>>
 sendFriendRequest(addresseeId: string): Promise<void>
 acceptFriendRequest(friendshipId: string): Promise<void>
 getLecturesByOwners(ownerIds: string[]): Promise<Lecture[]>
-copyLectureToMyNotes(lectureId: string): Promise<Lecture>
+copyLectureToMyNotes(lectureId: string, courseId?: string): Promise<Lecture>
+getMyCopyOf(sourceLectureId: string): Promise<Lecture | null>
 discardProcessingJob(id: string): Promise<void>
 getCourses(): Promise<Course[]>
 getCourse(id: string): Promise<Course | null>
@@ -194,12 +195,17 @@ and stay readable by everyone as shared demo content; new lectures are owned by
 their creator. Authenticated users read demo lectures, their own, and those of
 accepted friends, enforced in the database rather than the UI. Catch Up lists
 accepted friends' lectures and copies one into your own notebook as a new
-lecture owned by you. The original is never modified. Copies retain the source
-course and all saved AI fields; actual photo objects are copied into new staged
-materials and attached to the copied lecture using the existing schema. Stable
-copy IDs let retries resume after partial failure. Success is reported only after
-all photos are attached; the UI opens the returned copied lecture ID. An optional
-courseId argument is accepted only when it matches the source course.
+lecture owned by you. The original is never modified. Copies retain all saved
+AI fields (title, summary, key concepts, important points, assignments, exam
+mentions) only -- original photo objects are not copied, so the copy is text
+notes, not a duplicate of the friend's material. The copy ID is deterministic
+per (owner, source lecture), so a retry or a duplicate "Add to My Notes" tap
+resolves to the same row instead of creating a second copy; `getMyCopyOf`
+looks this row up without creating one. The optional courseId argument files
+the copy into a different course than the source when the caller supplies one
+(validated only to be an existing course); omitted, it defaults to the source
+lecture's course. `copyLectureMaterials` in `services/materials.ts` still
+exists for photo copying but is no longer called from this path.
 
 The verified Prashant demo is lecture demo-prashant-lecture in cs-2325 (CS 2325,
 Computer Organization), with photo a3bdac54-d050-40e7-a934-0a3dc5bb7172. Its data

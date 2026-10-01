@@ -28,21 +28,17 @@ import { ThemedText } from '@/components/themed-text';
 import { Screen } from '@/components/ui/Screen';
 
 import { getCourses } from '@/services/courses';
-import { copyLectureToMyNotes, getLecturesByOwners } from '@/services/lectures';
+import { getMyEnrolledCourses } from '@/services/enrollment';
+import { copyLectureToMyNotes, getMyCopyOf, getLecturesByOwners } from '@/services/lectures';
 import { getFriends } from '@/services/friends';
 import { getMaterials, getMaterialUrl } from '@/services/materials';
 
-import { Brand, Colors, Fonts } from '@/constants/theme';
+import { Brand, Fonts } from '@/constants/theme';
 import type {
   Course,
   Lecture,
   Profile,
 } from '@/types';
-
-// The sheet and its cards are painted a fixed cream, so text on them must use
-// the fixed dark palette. Inheriting theme.text turns them invisible in dark mode.
-const onCard = Colors.light.text;
-const onCardMuted = Colors.light.textSecondary;
 
 type CatchUpItem = {
   lecture: Lecture;
@@ -74,6 +70,9 @@ export default function CatchUpScreen() {
   const [friends, setFriends] =
     useState<Profile[]>([]);
 
+  const [enrolledCourses, setEnrolledCourses] = useState<Course[]>([]);
+  const [pickerOpen, setPickerOpen] = useState(false);
+
   const [friendOpen, setFriendOpen] =
     useState(false);
 
@@ -87,20 +86,23 @@ export default function CatchUpScreen() {
     setError(false);
 
     try {
-      const accepted = await getFriends();
+      const [accepted, enrolled] = await Promise.all([getFriends(), getMyEnrolledCourses()]);
       const shared = await getLecturesByOwners(accepted.map((friend) => friend.id));
       if (sequence !== loadSequence.current) return;
 
       setFriends(accepted);
+      setEnrolledCourses(enrolled);
       const lecture = shared[0];
       if (!lecture) {
         setItem(null);
+        setCopied(null);
         return;
       }
 
-      const [courses, materials] = await Promise.all([
+      const [courses, materials, existingCopy] = await Promise.all([
         getCourses(),
         getMaterials(lecture.id),
+        getMyCopyOf(lecture.id),
       ]);
       const photos = await Promise.all(
         materials
@@ -118,6 +120,7 @@ export default function CatchUpScreen() {
         course: courses.find((course) => course.id === lecture.courseId),
         sharedBy: accepted.find((friend) => friend.id === lecture.ownerId),
       });
+      setCopied(existingCopy);
     } catch {
       if (sequence === loadSequence.current) setError(true);
     } finally {
@@ -138,18 +141,32 @@ export default function CatchUpScreen() {
     }, [load])
   );
 
-  async function addToMyNotes() {
-    if (!item || added || adding) return;
+  async function copyInto(courseId?: string) {
+    if (!item || adding) return;
     setAdding(true);
     setCopyError(null);
     try {
-      const lecture = await copyLectureToMyNotes(item.lecture.id);
+      const lecture = await copyLectureToMyNotes(item.lecture.id, courseId);
       setCopied(lecture);
-    } catch (error) {
-      setCopyError(error instanceof Error ? error.message : 'Could not add these notes. Try again.');
+      setPickerOpen(false);
+    } catch (caught) {
+      setCopyError(caught instanceof Error ? caught.message : 'Could not add these notes. Try again.');
     } finally {
       setAdding(false);
     }
+  }
+
+  function addToMyNotes() {
+    if (!item || added || adding) return;
+    const enrolledInSource = enrolledCourses.some((course) => course.id === item.lecture.courseId);
+    if (enrolledInSource) void copyInto();
+    else setPickerOpen(true);
+  }
+
+  function openCopy() {
+    if (!copied) return;
+    setSheetOpen(false);
+    router.push({ pathname: '/lecture/[id]', params: { id: copied.id } });
   }
 
   return (
@@ -315,12 +332,20 @@ export default function CatchUpScreen() {
         item={item}
         added={added}
         busy={adding}
-        copiedId={copied?.id}
         copyError={copyError}
         onClose={() =>
           setSheetOpen(false)
         }
         onAdd={addToMyNotes}
+        onOpenCopy={openCopy}
+      />
+
+      <CourseChoiceSheet
+        visible={pickerOpen}
+        courses={enrolledCourses}
+        busy={adding}
+        onChoose={(course) => void copyInto(course.id)}
+        onClose={() => { if (!adding) setPickerOpen(false); }}
       />
 
       <AddFriendSheet
@@ -498,19 +523,19 @@ function CatchUpSheet({
   item,
   added,
   busy,
-  copiedId,
   copyError,
   onClose,
   onAdd,
+  onOpenCopy,
 }: {
   visible: boolean;
   item: CatchUpItem | null;
   added: boolean;
   busy: boolean;
-  copiedId?: string;
   copyError: string | null;
   onClose: () => void;
   onAdd: () => void;
+  onOpenCopy: () => void;
 }) {
   const courseCode =
     item?.course?.code ??
@@ -521,6 +546,7 @@ function CatchUpSheet({
     'Shared lecture';
 
   const concepts = item?.lecture.keyConcepts ?? [];
+  const friendName = item?.sharedBy?.name ?? 'a classmate';
 
   return (
     <Modal
@@ -540,7 +566,7 @@ function CatchUpSheet({
             event.stopPropagation()
           }
         >
-          <ScrollView showsVerticalScrollIndicator contentContainerStyle={{ paddingBottom: 12 }}>
+          <ScrollView style={styles.sheetScroll} showsVerticalScrollIndicator contentContainerStyle={styles.sheetScrollContent}>
           <View style={styles.handle} />
 
           <View style={styles.sheetHeader}>
@@ -604,7 +630,7 @@ function CatchUpSheet({
 
               <ThemedText
                 type="small"
-                style={styles.onCardMuted}
+                style={styles.mutedText}
               >
                 Shared lecture material with your course
               </ThemedText>
@@ -615,11 +641,11 @@ function CatchUpSheet({
             <Image key={photo.id} source={{ uri: photo.url }} resizeMode="contain"
               accessibilityLabel="Original shared lecture notes photo" style={styles.originalPhoto} />
           ) : (
-            <ThemedText key={photo.id} style={styles.onCardMuted}>Photo temporarily unavailable. Reopen to retry.</ThemedText>
+            <ThemedText key={photo.id} style={styles.mutedText}>Photo temporarily unavailable. Reopen to retry.</ThemedText>
           ))}
           <View style={styles.coveredCard}>
             <ThemedText style={styles.coveredTitle}>Summary</ThemedText>
-            <ThemedText style={styles.onCardMuted}>{item?.lecture.summary}</ThemedText>
+            <ThemedText style={styles.mutedText}>{item?.lecture.summary}</ThemedText>
           </View>
 
           <View style={styles.coveredCard}>
@@ -664,69 +690,9 @@ function CatchUpSheet({
           <View style={styles.coveredCard}>
             <ThemedText style={styles.coveredTitle}>Important points</ThemedText>
             {item?.lecture.importantPoints.map((point, index) => (
-              <ThemedText key={index} style={styles.onCardMuted}>• {point}</ThemedText>
+              <ThemedText key={index} style={styles.mutedText}>• {point}</ThemedText>
             ))}
           </View>
-          {copyError ? <ThemedText accessibilityRole="alert" style={styles.onCardMuted}>{copyError}</ThemedText> : null}
-          <Pressable
-            accessibilityRole="button"
-            accessibilityState={{ disabled: added || busy, busy }}
-            disabled={added || busy}
-            onPress={onAdd}
-            style={({ pressed }) => [
-              styles.primaryButton,
-              added &&
-                styles.primaryButtonAdded,
-              (pressed || busy) &&
-                styles.pressed,
-            ]}
-          >
-            <ThemedText
-              style={styles.primaryButtonText}
-            >
-              {added
-                ? '✓ Added to My Notes'
-                : busy
-                  ? 'Adding…'
-                  : '+ Add to My Notes'}
-            </ThemedText>
-          </Pressable>
-
-          <ThemedText
-            type="small"
-            style={styles.copyNote}
-          >
-            This creates your own copy. Your edits won&apos;t affect the original shared notes.
-          </ThemedText>
-
-          {item ? (
-            <Pressable
-              accessibilityRole="button"
-              onPress={() => {
-                onClose();
-
-                router.push({
-                  pathname:
-                    '/lecture/[id]',
-                  params: {
-                    id:
-                      copiedId ?? item.lecture.id,
-                  },
-                });
-              }}
-              style={({ pressed }) => [
-                styles.openNotebook,
-                pressed &&
-                  styles.pressed,
-              ]}
-            >
-              <ThemedText
-                style={styles.openNotebookText}
-              >
-                {copiedId ? 'Open My Notes →' : 'Open Shared Lecture →'}
-              </ThemedText>
-            </Pressable>
-          ) : null}
 
           <View style={styles.consent}>
             <ThemedText
@@ -744,6 +710,105 @@ function CatchUpSheet({
             </ThemedText>
           </View>
           </ScrollView>
+
+          {/* Sticky footer: always visible, independent of scroll position. */}
+          <View style={styles.sheetFooter}>
+            {copyError ? <ThemedText accessibilityRole="alert" style={styles.errorText}>{copyError}</ThemedText> : null}
+
+            <Pressable
+              accessibilityRole="button"
+              accessibilityState={{ disabled: busy, busy }}
+              disabled={busy}
+              onPress={added ? onOpenCopy : onAdd}
+              style={({ pressed }) => [
+                styles.primaryButton,
+                (pressed || busy) &&
+                  styles.pressed,
+              ]}
+            >
+              <ThemedText
+                style={styles.primaryButtonText}
+              >
+                {added
+                  ? 'Open in my notes →'
+                  : busy
+                    ? 'Adding…'
+                    : '+ Add to My Notes'}
+              </ThemedText>
+            </Pressable>
+
+            <ThemedText
+              type="small"
+              style={styles.copyNote}
+            >
+              {added
+                ? `✓ Copied from ${friendName}. Your edits won’t affect the original.`
+                : 'This creates your own copy. Your edits won’t affect the original shared notes.'}
+            </ThemedText>
+          </View>
+        </Pressable>
+      </Pressable>
+    </Modal>
+  );
+}
+
+function CourseChoiceSheet({
+  visible,
+  courses,
+  busy,
+  onChoose,
+  onClose,
+}: {
+  visible: boolean;
+  courses: Course[];
+  busy: boolean;
+  onChoose: (course: Course) => void;
+  onClose: () => void;
+}) {
+  return (
+    <Modal
+      visible={visible}
+      transparent
+      animationType="fade"
+      onRequestClose={onClose}
+    >
+      <Pressable style={styles.scrim} onPress={onClose}>
+        <Pressable style={styles.choiceSheet} onPress={(event) => event.stopPropagation()}>
+          <View style={styles.handle} />
+
+          <ThemedText style={styles.choiceTitle}>Which course are these notes for?</ThemedText>
+          <ThemedText type="small" style={styles.mutedText}>
+            You&apos;re not enrolled in the original course, so pick one of yours.
+          </ThemedText>
+
+          {courses.length ? (
+            <View style={styles.choiceList}>
+              {courses.map((course) => (
+                <Pressable
+                  key={course.id}
+                  accessibilityRole="button"
+                  accessibilityLabel={`File in ${course.code}, ${course.name}`}
+                  disabled={busy}
+                  onPress={() => onChoose(course)}
+                  style={({ pressed }) => [styles.choiceRow, (pressed || busy) && styles.pressed]}
+                >
+                  <View style={styles.choiceCopy}>
+                    <ThemedText style={styles.choiceCode}>{course.code}</ThemedText>
+                    <ThemedText type="small" style={styles.mutedText}>{course.name}</ThemedText>
+                  </View>
+                  <ThemedText style={styles.choiceArrow}>→</ThemedText>
+                </Pressable>
+              ))}
+            </View>
+          ) : (
+            <ThemedText style={styles.mutedText}>
+              You&apos;re not enrolled in any courses yet. Add one from the Courses tab first.
+            </ThemedText>
+          )}
+
+          <Pressable accessibilityRole="button" onPress={onClose} style={({ pressed }) => [styles.choiceCancel, pressed && styles.pressed]}>
+            <ThemedText style={styles.choiceCancelText}>Cancel</ThemedText>
+          </Pressable>
         </Pressable>
       </Pressable>
     </Modal>
@@ -787,8 +852,8 @@ function Step({
 }
 
 const styles = StyleSheet.create({
-  onCardMuted: {
-    color: onCardMuted,
+  mutedText: {
+    color: '#C7D7CD',
   },
 
   header: {
@@ -1182,10 +1247,17 @@ const styles = StyleSheet.create({
     maxHeight: '88%',
     paddingHorizontal: 20,
     paddingTop: 9,
-    paddingBottom: 34,
     borderTopLeftRadius: 27,
     borderTopRightRadius: 27,
-    backgroundColor: '#F7FAF4',
+    backgroundColor: '#123F2B',
+  },
+
+  sheetScroll: {
+    flex: 1,
+  },
+
+  sheetScrollContent: {
+    paddingBottom: 16,
   },
 
   handle: {
@@ -1194,7 +1266,7 @@ const styles = StyleSheet.create({
     alignSelf: 'center',
     marginBottom: 15,
     borderRadius: 2,
-    backgroundColor: '#C1C9BF',
+    backgroundColor: 'rgba(255,255,255,0.22)',
   },
 
   sheetHeader: {
@@ -1212,7 +1284,7 @@ const styles = StyleSheet.create({
   },
 
   sheetTitle: {
-    color: onCard,
+    color: '#FFFFFF',
     fontFamily: Fonts.serif,
     fontSize: 23,
     lineHeight: 30,
@@ -1224,11 +1296,11 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 6,
     borderRadius: 9,
-    backgroundColor: '#ECEFE9',
+    backgroundColor: 'rgba(255,255,255,0.14)',
   },
 
   coursePillText: {
-    color: '#5D685F',
+    color: '#DCE7DA',
     fontSize: 10,
     fontWeight: '800',
   },
@@ -1238,13 +1310,13 @@ const styles = StyleSheet.create({
     height: 32,
     flexShrink: 0,
     borderRadius: 16,
-    backgroundColor: '#EBEFEB',
+    backgroundColor: 'rgba(255,255,255,0.14)',
     alignItems: 'center',
     justifyContent: 'center',
   },
 
   closeText: {
-    color: '#566158',
+    color: '#FFFFFF',
     fontSize: 19,
   },
 
@@ -1257,12 +1329,12 @@ const styles = StyleSheet.create({
   },
 
   calendarIcon: {
-    color: Brand.forest,
+    color: Brand.lime,
     fontSize: 16,
   },
 
   missedDateText: {
-    color: onCardMuted,
+    color: '#C7D7CD',
     flex: 1,
     minWidth: 0,
     fontSize: 13,
@@ -1278,7 +1350,7 @@ const styles = StyleSheet.create({
     marginTop: 14,
     padding: 12,
     borderRadius: 13,
-    backgroundColor: '#EFF4ED',
+    backgroundColor: '#1B3B2D',
   },
 
   sharedAvatar: {
@@ -1303,7 +1375,7 @@ const styles = StyleSheet.create({
   },
 
   sharedByName: {
-    color: onCard,
+    color: '#FFFFFF',
     fontSize: 14,
     fontWeight: '800',
   },
@@ -1313,7 +1385,7 @@ const styles = StyleSheet.create({
     aspectRatio: 0.75,
     marginTop: 15,
     borderRadius: 11,
-    backgroundColor: '#E7EBE4',
+    backgroundColor: '#1B3B2D',
   },
 
   coveredCard: {
@@ -1321,12 +1393,12 @@ const styles = StyleSheet.create({
     marginTop: 15,
     padding: 14,
     borderRadius: 13,
-    backgroundColor: '#EEF3EC',
+    backgroundColor: '#1B3B2D',
     gap: 9,
   },
 
   coveredTitle: {
-    color: onCard,
+    color: '#FFFFFF',
     fontSize: 13,
     fontWeight: '900',
   },
@@ -1343,57 +1415,16 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 6,
     borderRadius: 999,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: 'rgba(255,255,255,0.12)',
     borderWidth: 1,
-    borderColor: '#CBD2C8',
+    borderColor: 'rgba(255,255,255,0.24)',
   },
 
   topicChipText: {
-    color: onCard,
+    color: '#FFFFFF',
     flexShrink: 1,
     fontSize: 10,
     fontWeight: '700',
-  },
-
-  primaryButton: {
-    width: '100%',
-    minHeight: 53,
-    marginTop: 17,
-    borderRadius: 999,
-    backgroundColor: Brand.forest,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 16,
-  },
-
-  primaryButtonAdded: {
-    backgroundColor: '#2E6544',
-  },
-
-  primaryButtonText: {
-    color: '#FFFFFF',
-    fontSize: 14,
-    fontWeight: '900',
-  },
-
-  copyNote: {
-    color: onCardMuted,
-    marginTop: 9,
-    textAlign: 'center',
-    lineHeight: 17,
-  },
-
-  openNotebook: {
-    minHeight: 45,
-    marginTop: 7,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-
-  openNotebookText: {
-    color: Brand.forest,
-    fontSize: 13,
-    fontWeight: '800',
   },
 
   consent: {
@@ -1405,22 +1436,120 @@ const styles = StyleSheet.create({
     marginTop: 10,
     paddingTop: 13,
     borderTopWidth: 1,
-    borderTopColor: '#D5DDD3',
+    borderTopColor: 'rgba(255,255,255,0.14)',
   },
 
   lock: {
-    // #7A857C measured at 3.64:1 on this background -- below WCAG AA's 4.5:1.
-    // Darkened to 5.01:1, same hue.
-    color: '#656E66',
+    color: '#A9C2B2',
     flexShrink: 0,
     fontSize: 13,
   },
 
   consentText: {
-    color: onCardMuted,
+    color: '#C7D7CD',
     flex: 1,
     minWidth: 0,
     fontSize: 10,
     lineHeight: 16,
+  },
+
+  sheetFooter: {
+    width: '100%',
+    paddingTop: 14,
+    paddingBottom: 30,
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(255,255,255,0.14)',
+  },
+
+  errorText: {
+    color: '#F3C7C7',
+    marginBottom: 8,
+    lineHeight: 20,
+  },
+
+  primaryButton: {
+    width: '100%',
+    minHeight: 53,
+    borderRadius: 999,
+    backgroundColor: Brand.lime,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 16,
+  },
+
+  primaryButtonText: {
+    color: Brand.ink,
+    fontSize: 14,
+    fontWeight: '900',
+  },
+
+  copyNote: {
+    color: '#C7D7CD',
+    marginTop: 9,
+    textAlign: 'center',
+    lineHeight: 17,
+  },
+
+  choiceSheet: {
+    width: '100%',
+    maxHeight: '80%',
+    paddingHorizontal: 20,
+    paddingTop: 9,
+    paddingBottom: 34,
+    borderTopLeftRadius: 27,
+    borderTopRightRadius: 27,
+    backgroundColor: '#123F2B',
+    gap: 6,
+  },
+
+  choiceTitle: {
+    color: '#FFFFFF',
+    fontFamily: Fonts.serif,
+    fontSize: 20,
+    lineHeight: 26,
+  },
+
+  choiceList: {
+    gap: 8,
+    marginTop: 10,
+  },
+
+  choiceRow: {
+    minHeight: 64,
+    paddingHorizontal: 14,
+    borderRadius: 16,
+    backgroundColor: '#1B3B2D',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+
+  choiceCopy: {
+    flex: 1,
+    minWidth: 0,
+    gap: 2,
+  },
+
+  choiceCode: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '800',
+  },
+
+  choiceArrow: {
+    color: Brand.lime,
+    fontSize: 18,
+  },
+
+  choiceCancel: {
+    minHeight: 48,
+    marginTop: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+
+  choiceCancelText: {
+    color: '#DCE7DA',
+    fontWeight: '700',
   },
 });

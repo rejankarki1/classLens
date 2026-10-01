@@ -143,21 +143,32 @@ export async function getLecturesByOwners(ownerIds: string[]): Promise<SharedLec
   return data.map((row) => ({ ...fromRow(row), ownerId: row.owner_id }));
 }
 
-/** Copy saved analysis and real captures; retries resume the same user's copy. */
+/** Deterministic so retries, and a duplicate "Add to My Notes" tap, resolve to the same row. */
+function copyId(userId: string, sourceLectureId: string): string {
+  return `catchup:${userId}:${sourceLectureId}`;
+}
+
+/**
+ * Copy saved notes only -- title, summary, concepts, important points,
+ * assignments, exam mentions. Original photos are intentionally not copied;
+ * the copy is text notes, not a duplicate of the friend's original material.
+ * Defaults into the source lecture's course; pass courseId to file the copy
+ * into a different course of the caller's choosing instead.
+ */
 export async function copyLectureToMyNotes(lectureId: string, courseId?: string): Promise<Lecture> {
   if (getDataMode() !== 'supabase') throw new Error('CatchUp requires EXPO_PUBLIC_DATA_MODE=supabase.');
   const { supabase } = await import('@/lib/supabase');
-  const { copyLectureMaterials } = await import('./materials');
   const { data: auth, error: authError } = await supabase.auth.getUser();
   if (authError || !auth.user) throw new Error('Sign in to add these notes.');
   const source = await getLecture(lectureId);
   if (!source) throw new Error('That shared lecture is no longer available.');
-  if (courseId && courseId !== source.courseId) throw new Error('Shared notes must stay in their matching course.');
-  const id = `catchup:${auth.user.id}:${source.id}`;
+  const targetCourseId = courseId ?? source.courseId;
+  if (courseId && !(await getCourse(courseId))) throw new Error('Choose a valid course.');
+  const id = copyId(auth.user.id, source.id);
   let saved = await getLecture(id);
   if (!saved) {
     const { data, error } = await supabase.from('lectures').insert({
-      id, owner_id: auth.user.id, course_id: source.courseId,
+      id, owner_id: auth.user.id, course_id: targetCourseId,
       title: source.title, summary: source.summary,
       key_concepts: source.keyConcepts, important_points: source.importantPoints,
       assignments: source.assignments, exam_mentions: source.examMentions,
@@ -166,6 +177,14 @@ export async function copyLectureToMyNotes(lectureId: string, courseId?: string)
     saved = data ? fromRow(data) : await getLecture(id);
     if (!saved) throw new Error(`Could not copy lecture: ${error?.message ?? 'No saved lecture returned.'}`);
   }
-  await copyLectureMaterials(source.id, saved.id);
   return saved;
+}
+
+/** The signed-in user's own copy of a shared lecture, if one already exists. */
+export async function getMyCopyOf(sourceLectureId: string): Promise<Lecture | null> {
+  if (getDataMode() !== 'supabase') return null;
+  const { supabase } = await import('@/lib/supabase');
+  const { data: auth } = await supabase.auth.getUser();
+  if (!auth.user) return null;
+  return getLecture(copyId(auth.user.id, sourceLectureId));
 }
