@@ -24,7 +24,7 @@ import {
 import {
   CaptureImportError,
   pickCapturePhotos,
-  type CaptureImportSource,
+  type PreparedCaptureImport,
 } from '@/features/capture/captureImports';
 import { checkPhotoQuality } from '@/features/capture/photoQuality';
 import { logTiming } from '@/lib/timing';
@@ -60,27 +60,51 @@ function warningMessage(warnings: PhotoQualityWarning[]): string {
   return `This photo looks ${labels.slice(0, -1).join(', ')} and ${labels.at(-1)}.`;
 }
 
+function readPreparedImport(value?: string): PreparedCaptureImport | null {
+  if (!value) return null;
+  try {
+    return JSON.parse(value) as PreparedCaptureImport;
+  } catch (error) {
+    console.error('[capture-import] Could not read prepared import', error);
+    return null;
+  }
+}
+
+function prepareImportedPhotos(prepared: PreparedCaptureImport | null): CaptureSessionPhoto[] {
+  if (!prepared) return [];
+  const capturedAt = new Date().toISOString();
+  return prepared.photos.map((photo, index) => ({
+    ...photo,
+    id: `${capturedAt}-${index + 1}`,
+    capturedAt,
+    quality: { status: 'checking', warnings: [], metrics: null },
+  }));
+}
+
 export default function CaptureScreen() {
-  const params = useLocalSearchParams<{ source?: string | string[] }>();
+  const params = useLocalSearchParams<{ source?: string | string[]; imported?: string | string[] }>();
   const sourceParam = Array.isArray(params.source) ? params.source[0] : params.source;
-  const importSource: CaptureImportSource | null = sourceParam === 'photos' || sourceParam === 'file'
-    ? sourceParam
-    : null;
+  const importedParam = Array.isArray(params.imported) ? params.imported[0] : params.imported;
+  const importSource = sourceParam === 'photos';
+  const [initialImport] = useState(() => readPreparedImport(importedParam));
+  const [initialPhotos] = useState(() => prepareImportedPhotos(initialImport));
   const camera = useRef<CameraView>(null);
   const requestedPermission = useRef(false);
-  const requestedImport = useRef(false);
-  const sequence = useRef(0);
+  const pickerInFlight = useRef(false);
+  const initialAnalysisStarted = useRef(false);
+  const sequence = useRef(initialPhotos.length);
   const pending = useRef(0);
-  const sessionId = useRef(`capture-${Date.now()}`);
+  const [fallbackSessionId] = useState(() => `capture-${Date.now()}`);
+  const sessionId = useRef(initialImport?.sessionId ?? fallbackSessionId);
   const sessionCreatedAt = useRef(new Date().toISOString());
-  const photosRef = useRef<CaptureSessionPhoto[]>([]);
+  const photosRef = useRef<CaptureSessionPhoto[]>(initialPhotos);
   const checks = useRef(new Map<string, Promise<void>>());
   const warningTimers = useRef(new Map<string, ReturnType<typeof setTimeout>>());
   const removedPhotos = useRef(new Set<string>());
 
   const [permission, requestPermission] = useCameraPermissions();
   const [requestingPermission, setRequestingPermission] = useState(false);
-  const [photos, setPhotos] = useState<CaptureSessionPhoto[]>([]);
+  const [photos, setPhotos] = useState<CaptureSessionPhoto[]>(initialPhotos);
   const [pendingCount, setPendingCount] = useState(0);
   const [preview, setPreview] = useState<CaptureSessionPhoto | null>(null);
   const [taking, setTaking] = useState(false);
@@ -89,7 +113,7 @@ export default function CaptureScreen() {
   const [cameraError, setCameraError] = useState('');
   const [cameraKey, setCameraKey] = useState(0);
   const [finishing, setFinishing] = useState(false);
-  const [importing, setImporting] = useState(importSource !== null);
+  const [importing, setImporting] = useState(false);
   const [importError, setImportError] = useState('');
   const [importPermissionDenied, setImportPermissionDenied] = useState(false);
 
@@ -120,6 +144,30 @@ export default function CaptureScreen() {
     });
   }
 
+  function keepAnyway(photoId: string) {
+    const timer = warningTimers.current.get(photoId);
+    if (timer) clearTimeout(timer);
+    warningTimers.current.delete(photoId);
+    updatePhotos((current) => current.map((photo) => photo.id === photoId && photo.quality.status === 'warning'
+      ? { ...photo, quality: { ...photo.quality, status: 'accepted-anyway' } }
+      : photo));
+  }
+
+  async function analyzePhoto(photo: CaptureSessionPhoto) {
+    const start = Date.now();
+    const quality = await checkPhotoQuality(photo.uri);
+    const { File } = await import('expo-file-system');
+    let bytes = 0;
+    try { bytes = new File(photo.uri).size ?? 0; } catch { /* best-effort for the timing log only */ }
+    logTiming('capture', 'blur-check', Date.now() - start, { photoId: photo.id, bytes });
+    if (removedPhotos.current.has(photo.id)) return;
+    updatePhotos((current) => current.map((item) => item.id === photo.id ? { ...item, quality } : item));
+    if (quality.status === 'warning') {
+      const timer = setTimeout(() => keepAnyway(photo.id), 3000);
+      warningTimers.current.set(photo.id, timer);
+    }
+  }
+
   function savePicture(picture: CameraCapturedPicture) {
     pending.current = Math.max(0, pending.current - 1);
     setPendingCount(pending.current);
@@ -135,12 +183,13 @@ export default function CaptureScreen() {
   }
 
   const importPhotos = useCallback(async () => {
-    if (!importSource) return;
+    if (!importSource || pickerInFlight.current) return;
+    pickerInFlight.current = true;
     setImporting(true);
     setImportError('');
     setImportPermissionDenied(false);
     try {
-      const imported = await pickCapturePhotos(importSource, sessionId.current);
+      const imported = await pickCapturePhotos(sessionId.current);
       if (!imported) {
         router.back();
         return;
@@ -161,35 +210,28 @@ export default function CaptureScreen() {
         void task.finally(() => checks.current.delete(photo.id));
       }
     } catch (caught) {
+      console.error('[capture-import] Picker failed', caught);
       setImportPermissionDenied(caught instanceof CaptureImportError && caught.code === 'permission-denied');
-      setImportError(caught instanceof Error ? caught.message : 'ClassLens could not open those images. Try again.');
+      setImportError("Couldn't open your photos. Try again.");
     } finally {
       setImporting(false);
+      pickerInFlight.current = false;
     }
   // These functions operate on refs/stable state setters and intentionally run only for picker retries.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [importSource]);
 
   useEffect(() => {
-    if (!importSource || requestedImport.current) return;
-    requestedImport.current = true;
-    void importPhotos();
-  }, [importPhotos, importSource]);
-
-  async function analyzePhoto(photo: CaptureSessionPhoto) {
-    const start = Date.now();
-    const quality = await checkPhotoQuality(photo.uri);
-    const { File } = await import('expo-file-system');
-    let bytes = 0;
-    try { bytes = new File(photo.uri).size ?? 0; } catch { /* best-effort for the timing log only */ }
-    logTiming('capture', 'blur-check', Date.now() - start, { photoId: photo.id, bytes });
-    if (removedPhotos.current.has(photo.id)) return;
-    updatePhotos((current) => current.map((item) => item.id === photo.id ? { ...item, quality } : item));
-    if (quality.status === 'warning') {
-      const timer = setTimeout(() => keepAnyway(photo.id), 3000);
-      warningTimers.current.set(photo.id, timer);
+    if (initialAnalysisStarted.current || !initialPhotos.length) return;
+    initialAnalysisStarted.current = true;
+    for (const photo of initialPhotos) {
+      const task = analyzePhoto(photo);
+      checks.current.set(photo.id, task);
+      void task.finally(() => checks.current.delete(photo.id));
     }
-  }
+  // analyzePhoto operates on refs/stable state setters and each prepared import is analyzed once.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialPhotos]);
 
   async function takePhoto() {
     if (!camera.current || !cameraReady || taking || photos.length + pending.current >= MAX_CAPTURE_PHOTOS) return;
@@ -218,15 +260,6 @@ export default function CaptureScreen() {
     warningTimers.current.delete(photoId);
     updatePhotos((current) => current.filter((photo) => photo.id !== photoId));
     setPreview((current) => current?.id === photoId ? null : current);
-  }
-
-  function keepAnyway(photoId: string) {
-    const timer = warningTimers.current.get(photoId);
-    if (timer) clearTimeout(timer);
-    warningTimers.current.delete(photoId);
-    updatePhotos((current) => current.map((photo) => photo.id === photoId && photo.quality.status === 'warning'
-      ? { ...photo, quality: { ...photo.quality, status: 'accepted-anyway' } }
-      : photo));
   }
 
   function retryCamera() {

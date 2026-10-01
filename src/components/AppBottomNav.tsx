@@ -24,6 +24,7 @@ import {
 } from '@/components/CaptureModeSheet';
 
 import { ThemedText } from '@/components/themed-text';
+import { useCaptureImportLauncher } from '@/features/capture/useCaptureImportLauncher';
 
 type MainRoute =
   | '/'
@@ -36,6 +37,7 @@ const HOLD_TIME = 500;
 export function AppBottomNav() {
   const [sheetOpen, setSheetOpen] = useState(false);
   const longPressTriggered = useRef(false);
+  const launchCaptureImport = useCaptureImportLauncher();
 
   function handlePressIn() {
     longPressTriggered.current = false;
@@ -65,12 +67,12 @@ export function AppBottomNav() {
     longPressTriggered.current = false;
     setSheetOpen(false);
 
-    router.push({
-      pathname: '/capture',
-      params: {
-        source: mode === 'photo' ? 'photos' : mode,
-      },
-    });
+    if (mode === 'photo') {
+      void launchCaptureImport();
+      return;
+    }
+
+    router.push({ pathname: '/capture', params: { source: 'camera' } });
   }
 
   return (

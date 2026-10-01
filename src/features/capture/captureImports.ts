@@ -1,11 +1,8 @@
-import * as DocumentPicker from 'expo-document-picker';
 import { Directory, File, Paths } from 'expo-file-system';
 import { ImageManipulator, SaveFormat } from 'expo-image-manipulator';
 import * as ImagePicker from 'expo-image-picker';
 
 import { MAX_CAPTURE_PHOTOS } from '@/features/capture/captureSession';
-
-export type CaptureImportSource = 'photos' | 'file';
 
 export type ImportedCapturePhoto = {
   uri: string;
@@ -15,10 +12,15 @@ export type ImportedCapturePhoto = {
   fileName: string;
 };
 
+export type PreparedCaptureImport = {
+  sessionId: string;
+  photos: ImportedCapturePhoto[];
+};
+
 export class CaptureImportError extends Error {
   constructor(
     message: string,
-    readonly code: 'permission-denied' | 'too-many' | 'unsupported' | 'unreadable',
+    readonly code: 'permission-denied' | 'unsupported' | 'unreadable',
   ) {
     super(message);
   }
@@ -61,31 +63,18 @@ function extensionFor(mimeType: (typeof allowedMimeTypes)[number]): string {
   return mimeType.slice('image/'.length);
 }
 
-async function chooseAssets(source: CaptureImportSource): Promise<PickedAsset[] | null> {
-  if (source === 'photos') {
-    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (!permission.granted) {
-      throw new CaptureImportError('Allow photo access to choose images for this lecture.', 'permission-denied');
-    }
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ['images'],
-      allowsMultipleSelection: true,
-      selectionLimit: MAX_CAPTURE_PHOTOS,
-      quality: 1,
-    });
-    return result.canceled ? null : result.assets;
+async function chooseAssets(): Promise<PickedAsset[] | null> {
+  const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+  if (!permission.granted) {
+    throw new CaptureImportError('Allow photo access to choose images for this lecture.', 'permission-denied');
   }
-
-  const result = await DocumentPicker.getDocumentAsync({
-    type: [...allowedMimeTypes],
-    multiple: true,
-    copyToCacheDirectory: true,
+  const result = await ImagePicker.launchImageLibraryAsync({
+    mediaTypes: ['images'],
+    allowsMultipleSelection: true,
+    selectionLimit: MAX_CAPTURE_PHOTOS,
+    quality: 1,
   });
-  if (result.canceled) return null;
-  if (result.assets.length > MAX_CAPTURE_PHOTOS) {
-    throw new CaptureImportError(`Choose up to ${MAX_CAPTURE_PHOTOS} images at a time.`, 'too-many');
-  }
-  return result.assets;
+  return result.canceled ? null : result.assets;
 }
 
 async function copyAsset(
@@ -138,10 +127,9 @@ async function copyAsset(
 }
 
 export async function pickCapturePhotos(
-  source: CaptureImportSource,
   sessionId: string,
 ): Promise<ImportedCapturePhoto[] | null> {
-  const assets = await chooseAssets(source);
+  const assets = await chooseAssets();
   if (!assets) return null;
   if (!assets.length) throw new CaptureImportError('No images were selected.', 'unreadable');
 
@@ -161,4 +149,10 @@ export async function pickCapturePhotos(
     if (directory.exists) directory.delete();
     throw error;
   }
+}
+
+export async function prepareCaptureImport(): Promise<PreparedCaptureImport | null> {
+  const sessionId = `capture-${Date.now()}`;
+  const photos = await pickCapturePhotos(sessionId);
+  return photos ? { sessionId, photos } : null;
 }

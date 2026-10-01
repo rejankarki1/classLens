@@ -16,6 +16,7 @@ import {
 } from "@/components/ui/Editorial";
 import { Screen } from "@/components/ui/Screen";
 import { Brand, Fonts } from "@/constants/theme";
+import { useCaptureImportLauncher } from "@/features/capture/useCaptureImportLauncher";
 import { getInitials } from "@/features/profile/initials";
 import { getMyProfile, onProfileChange } from "@/services/auth";
 import { getMyEnrolledCourses } from "@/services/enrollment";
@@ -23,6 +24,7 @@ import { getLectures } from "@/services/lectures";
 import type { Course, Lecture, Profile } from "@/types";
 
 export default function HomeScreen() {
+  const launchCaptureImport = useCaptureImportLauncher();
   const [courses, setCourses] = useState<Course[]>([]);
   const [recent, setRecent] = useState<Lecture[]>([]);
 
@@ -243,12 +245,15 @@ export default function HomeScreen() {
           </Pressable>
 
           <View style={styles.captureModes}>
-            <CaptureMode icon="▣" title="Photo" />
-            <CaptureMode icon="◉" title="Audio" muted />
             <CaptureMode
-              icon="↥"
-              title="File"
-              onPress={() => router.push({ pathname: '/capture', params: { source: 'file' } })}
+              icon="◎"
+              title="Camera"
+              onPress={() => router.push('/capture')}
+            />
+            <CaptureMode
+              icon="▣"
+              title="Photo library"
+              onPress={() => void launchCaptureImport()}
             />
           </View>
         </View>
@@ -523,42 +528,24 @@ export default function HomeScreen() {
 function CaptureMode({
   icon,
   title,
-  muted = false,
   onPress,
 }: {
   icon: string;
   title: string;
-  muted?: boolean;
-  onPress?: () => void;
+  onPress: () => void;
 }) {
-  const content = (
-    <>
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={`Choose ${title.toLowerCase()}`}
+      onPress={onPress}
+      style={({ pressed }) => [styles.modeCard, pressed && styles.capturePressed]}
+    >
       <ThemedText style={styles.modeIcon}>{icon}</ThemedText>
-
       <ThemedText style={styles.modeTitle}>{title}</ThemedText>
-
-      {muted ? (
-        <ThemedText style={styles.modeSoon}>NEXT</ThemedText>
-      ) : (
-        <ThemedText style={styles.modeReady}>READY</ThemedText>
-      )}
-    </>
+      <ThemedText style={styles.modeReady}>READY</ThemedText>
+    </Pressable>
   );
-
-  if (onPress) {
-    return (
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel={`Choose ${title.toLowerCase()}`}
-        onPress={onPress}
-        style={({ pressed }) => [styles.modeCard, pressed && styles.capturePressed]}
-      >
-        {content}
-      </Pressable>
-    );
-  }
-
-  return <View style={[styles.modeCard, muted && styles.modeMuted]}>{content}</View>;
 }
 
 function MenuItem({
@@ -865,10 +852,6 @@ const styles = StyleSheet.create({
     gap: 3,
   },
 
-  modeMuted: {
-    opacity: 0.55,
-  },
-
   modeIcon: {
     color: Brand.lime,
     fontSize: 17,
@@ -882,15 +865,6 @@ const styles = StyleSheet.create({
 
   modeReady: {
     color: Brand.lime,
-    fontSize: 7,
-    letterSpacing: 1,
-    fontWeight: "800",
-  },
-
-  modeSoon: {
-    // #B5C7BB measured at 4.24:1 on this dark background -- below WCAG AA's
-    // 4.5:1. Lightened to 5.12:1, same hue.
-    color: "#C7DACD",
     fontSize: 7,
     letterSpacing: 1,
     fontWeight: "800",

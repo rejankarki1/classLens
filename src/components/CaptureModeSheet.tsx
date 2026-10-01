@@ -8,11 +8,7 @@ import {
 import { ThemedText } from '@/components/themed-text';
 import { Brand, Fonts } from '@/constants/theme';
 
-export type CaptureMode =
-  | 'photo'
-  | 'video'
-  | 'audio'
-  | 'file';
+export type CaptureMode = 'camera' | 'photo';
 
 type Props = {
   visible: boolean;
@@ -61,18 +57,16 @@ export function CaptureModeSheet({
           <View style={styles.grid}>
             <CaptureTile
               icon="◎"
-              title="Photos"
+              title="Camera"
+              detail="Take up to 6 photos"
+              onPress={() => onSelect('camera')}
+            />
+            <CaptureTile
+              icon="▣"
+              title="Photo library"
               detail="Choose up to 6 images"
               onPress={() => onSelect('photo')}
             />
-            <CaptureTile
-              icon="↥"
-              title="Files"
-              detail="JPEG, PNG, HEIC & WebP"
-              onPress={() => onSelect('file')}
-            />
-            <CaptureTile icon="◉" title="Audio" detail="Record or import" disabled />
-            <CaptureTile icon="▶" title="Video" detail="Import a recording" disabled />
           </View>
 
           <Pressable
@@ -99,24 +93,19 @@ function CaptureTile({
   title,
   detail,
   onPress,
-  disabled = false,
 }: {
   icon: string;
   title: string;
   detail: string;
-  onPress?: () => void;
-  disabled?: boolean;
+  onPress: () => void;
 }) {
   return (
     <Pressable
       accessibilityRole="button"
       accessibilityLabel={title}
-      accessibilityState={{ disabled }}
-      disabled={disabled}
       onPress={onPress}
       style={({ pressed }) => [
         styles.tile,
-        disabled && styles.tileDisabled,
         pressed && styles.tilePressed,
       ]}
     >
@@ -129,8 +118,6 @@ function CaptureTile({
       <ThemedText style={styles.tileTitle}>
         {title}
       </ThemedText>
-
-      {disabled ? <ThemedText style={styles.soon}>Soon</ThemedText> : null}
 
       <ThemedText
         type="small"
@@ -208,23 +195,6 @@ const styles = StyleSheet.create({
   tilePressed: {
     opacity: 0.82,
     transform: [{ scale: 0.96 }],
-  },
-
-  tileDisabled: {
-    opacity: 0.55,
-  },
-
-  soon: {
-    alignSelf: 'flex-start',
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 999,
-    overflow: 'hidden',
-    backgroundColor: '#E8EDE7',
-    color: Brand.forest,
-    fontSize: 10,
-    fontWeight: '800',
-    textTransform: 'uppercase',
   },
 
   iconCircle: {

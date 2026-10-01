@@ -124,7 +124,7 @@ export default function ProfileScreen() {
         </ThemedText>
 
         <SettingRow title="Edit profile" onPress={() => router.push('/edit-profile' as never)} />
-        <SettingRow title="Manage courses" onPress={() => router.push('/course-onboarding' as never)} />
+        <SettingRow title="Manage courses" onPress={() => router.push('/courses' as never)} />
         <SettingRow title="Review missed questions" onPress={() => router.push('/quiz-review' as never)} />
         <SettingRow title="Notifications" value={notifications.enabled ? 'On' : 'Off'} onPress={() => void manageNotifications()} />
         <SettingRow title="Privacy" onPress={() => router.push('/privacy' as never)} />
