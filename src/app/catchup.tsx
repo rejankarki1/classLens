@@ -28,28 +28,23 @@ import { ThemedText } from '@/components/themed-text';
 import { Screen } from '@/components/ui/Screen';
 
 import { getCourses } from '@/services/courses';
-import { copyLectureToMyNotes, getLecture, getLecturesByOwners } from '@/services/lectures';
-import { getFriends, getProfileById } from '@/services/friends';
+import { copyLectureToMyNotes, getLecturesByOwners } from '@/services/lectures';
+import { getFriends } from '@/services/friends';
 import { getMaterials, getMaterialUrl } from '@/services/materials';
 
 import { Brand, Colors, Fonts } from '@/constants/theme';
-
-// The sheet and its cards are painted a fixed cream, so text on them must use
-// the fixed dark palette. Inheriting theme.text turns them invisible in dark mode.
-const onCard = Colors.light.text;
-const onCardMuted = Colors.light.textSecondary;
-
 import type {
   Course,
   Lecture,
   Profile,
 } from '@/types';
 
-// The seeded demo classmate and their shared lecture.
-const demoLectureId = 'demo-prashant-lecture';
-const demoOwnerId = 'd3405e91-5a2b-4c77-9f61-0b8a7c2d4e10';
+// The sheet and its cards are painted a fixed cream, so text on them must use
+// the fixed dark palette. Inheriting theme.text turns them invisible in dark mode.
+const onCard = Colors.light.text;
+const onCardMuted = Colors.light.textSecondary;
 
-type CatchupItem = {
+type CatchUpItem = {
   lecture: Lecture;
   course?: Course;
   /** The classmate whose notebook this came from. */
@@ -57,12 +52,14 @@ type CatchupItem = {
   photos: { id: string; url: string | null }[];
 };
 
-export default function CatchupMateScreen() {
+export default function CatchUpScreen() {
   const [item, setItem] =
-    useState<CatchupItem | null>(null);
+    useState<CatchUpItem | null>(null);
 
   const [loading, setLoading] =
     useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const loadSequence = useRef(0);
 
   const [sheetOpen, setSheetOpen] =
     useState(false);
@@ -80,95 +77,65 @@ export default function CatchupMateScreen() {
   const [friendOpen, setFriendOpen] =
     useState(false);
 
-  const [reload, setReload] =
-    useState(0);
-
   const [adding, setAdding] =
     useState(false);
 
+  const load = useCallback(async (initial: boolean) => {
+    const sequence = ++loadSequence.current;
+    if (initial) setLoading(true);
+    else setRefreshing(true);
+    setError(false);
+
+    try {
+      const accepted = await getFriends();
+      const shared = await getLecturesByOwners(accepted.map((friend) => friend.id));
+      if (sequence !== loadSequence.current) return;
+
+      setFriends(accepted);
+      const lecture = shared[0];
+      if (!lecture) {
+        setItem(null);
+        return;
+      }
+
+      const [courses, materials] = await Promise.all([
+        getCourses(),
+        getMaterials(lecture.id),
+      ]);
+      const photos = await Promise.all(
+        materials
+          .filter((material) => material.type === 'photo')
+          .map(async (material) => ({
+            id: material.id,
+            url: await getMaterialUrl(material),
+          })),
+      );
+      if (sequence !== loadSequence.current) return;
+
+      setItem({
+        photos,
+        lecture,
+        course: courses.find((course) => course.id === lecture.courseId),
+        sharedBy: accepted.find((friend) => friend.id === lecture.ownerId),
+      });
+    } catch {
+      if (sequence === loadSequence.current) setError(true);
+    } finally {
+      if (sequence === loadSequence.current) {
+        setLoading(false);
+        setRefreshing(false);
+      }
+    }
+  }, []);
 
   useFocusEffect(
     useCallback(() => {
-      let active = true;
-
-      async function load() {
-        try {
-          setLoading(true);
-          setError(false);
-
-
-          // Catch Up surfaces what accepted classmates shared, never your own
-          // notebooks. Friend lookups need a session, so they can fail outright
-          // in the signed-out demo; that must not blank the screen.
-          let accepted: Profile[] = [];
-          try {
-            accepted = await getFriends();
-          } catch {
-            accepted = [];
-          }
-
-          if (!active) return;
-          setFriends(accepted);
-
-          let shared: Awaited<ReturnType<typeof getLecturesByOwners>> = [];
-          try {
-            shared = await getLecturesByOwners(accepted.map((friend) => friend.id));
-          } catch {
-            shared = [];
-          }
-
-          if (!active) return;
-
-          // Use the verified photo-backed Assembly demo, never the CS 3358
-          // placeholder. The migration restores this existing row from seed.
-          let lecture = await getLecture(demoLectureId);
-          let owner = lecture ? (await getProfileById(demoOwnerId)) ?? undefined : undefined;
-          if (lecture && lecture.courseId !== 'cs-2325') {
-            throw new Error('Assembly demo data has not been repaired yet.');
-          }
-          if (!lecture) {
-            const friendLecture = shared.find((entry) => entry.ownerId !== demoOwnerId);
-            lecture = friendLecture ?? null;
-            owner = accepted.find((friend) => friend.id === friendLecture?.ownerId);
-          }
-          if (!active) return;
-
-          if (!lecture) {
-            setItem(null);
-            return;
-          }
-
-          const courses = await getCourses();
-          if (!active) return;
-
-          const materials = await getMaterials(lecture.id);
-          const photos = await Promise.all(materials.filter((material) => material.type === 'photo').map(async (material) => ({ id: material.id, url: await getMaterialUrl(material) })));
-          if (!active) return;
-          setItem({
-            photos,
-            lecture,
-            course: courses.find(
-              (course) => course.id === lecture?.courseId
-            ),
-            sharedBy: owner,
-          });
-        } catch {
-          if (active) {
-            setError(true);
-          }
-        } finally {
-          if (active) {
-            setLoading(false);
-          }
-        }
-      }
-
-      load();
+      void load(true);
 
       return () => {
-        active = false;
+        loadSequence.current += 1;
       };
-    }, [reload])
+    }, [load])
   );
 
   async function addToMyNotes() {
@@ -186,7 +153,11 @@ export default function CatchupMateScreen() {
   }
 
   return (
-    <Screen showBottomNav>
+    <Screen
+      showBottomNav
+      refreshing={refreshing}
+      onRefresh={() => void load(false)}
+    >
       <View style={styles.header}>
         <ClassLensLogo compact />
 
@@ -195,7 +166,7 @@ export default function CatchupMateScreen() {
             allowFontScaling={false}
             style={styles.eyebrow}
           >
-            CATCHUPMATE
+            CATCHUP
           </ThemedText>
 
           <ThemedText
@@ -222,11 +193,11 @@ export default function CatchupMateScreen() {
         themeColor="textSecondary"
         style={styles.description}
       >
-        When you miss a lecture, CatchupMate surfaces notes
+        When you miss a lecture, CatchUp surfaces notes
         shared by classmates so you can get back on track fast.
       </ThemedText>
 
-      {/* CatchUp Friend — frontend placeholder for future friend sharing */}
+      {/* Friend search and requests power real CatchUp sharing. */}
       <Pressable
         accessibilityRole="button"
         accessibilityLabel="Add CatchUp Friend"
@@ -309,36 +280,38 @@ export default function CatchupMateScreen() {
       ) : error ? (
         <View style={styles.loadingCard}>
           <ThemedText style={styles.loadingTitle}>
-            CatchupMate is unavailable
+            CatchUp is unavailable
           </ThemedText>
 
           <ThemedText
             style={styles.onCardMuted}
           >
-            We couldn't load your catch-up information.
+            We couldn&apos;t load your CatchUp information.
           </ThemedText>
 
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel="Try loading CatchupMate again"
-            onPress={() => setReload((value) => value + 1)}
+            accessibilityLabel="Try loading CatchUp again"
+            onPress={() => void load(false)}
             style={({ pressed }) => [styles.retryButton, pressed && styles.pressed]}
           >
             <ThemedText allowFontScaling={false} style={styles.retryText}>Try again</ThemedText>
           </Pressable>
         </View>
-      ) : (
-        <CatchupAlert
+      ) : item ? (
+        <CatchUpAlert
           item={item}
           onOpen={() =>
             setSheetOpen(true)
           }
         />
+      ) : (
+        <CatchUpEmptyState onAddFriend={() => setFriendOpen(true)} />
       )}
 
       <View style={styles.howItWorks}>
         <ThemedText style={styles.howTitle}>
-          How CatchupMate works
+          How CatchUp works
         </ThemedText>
 
         <Step
@@ -355,7 +328,7 @@ export default function CatchupMateScreen() {
 
         <Step
           number="03"
-          title="CatchupMate alerts you"
+          title="CatchUp alerts you"
           body="Review the shared material and add it to your own notebook."
         />
 
@@ -366,7 +339,7 @@ export default function CatchupMateScreen() {
         />
       </View>
 
-      <CatchupSheet
+      <CatchUpSheet
         visible={sheetOpen}
         item={item}
         added={added}
@@ -382,25 +355,43 @@ export default function CatchupMateScreen() {
       <AddFriendSheet
         visible={friendOpen}
         onClose={() => setFriendOpen(false)}
-        onChanged={() =>
-          setReload((value) => value + 1)
-        }
+        onChanged={() => void load(false)}
       />
     </Screen>
   );
 }
 
-function CatchupAlert({
+function CatchUpEmptyState({ onAddFriend }: { onAddFriend: () => void }) {
+  return (
+    <View style={styles.loadingCard}>
+      <ThemedText style={styles.loadingTitle}>
+        Add classmates to see their shared notes.
+      </ThemedText>
+
+      <ThemedText style={styles.onCardMuted}>
+        Accepted classmates and their latest notes will appear here.
+      </ThemedText>
+
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel="Add a classmate"
+        onPress={onAddFriend}
+        style={({ pressed }) => [styles.retryButton, pressed && styles.pressed]}
+      >
+        <ThemedText allowFontScaling={false} style={styles.retryText}>Add Friend</ThemedText>
+      </Pressable>
+    </View>
+  );
+}
+
+function CatchUpAlert({
   item,
   onOpen,
 }: {
-  item: CatchupItem | null;
+  item: CatchUpItem;
   onOpen: () => void;
 }) {
-  const bounce =
-    useRef(
-      new Animated.Value(0)
-    ).current;
+  const [bounce] = useState(() => new Animated.Value(0));
 
   useEffect(() => {
     const animation =
@@ -434,7 +425,7 @@ function CatchupAlert({
   }, [bounce]);
 
   const courseCode =
-    item?.course?.code ??
+    item.course?.code ??
     'YOUR COURSE';
 
   return (
@@ -475,7 +466,7 @@ function CatchupAlert({
                 allowFontScaling={false}
                 style={styles.alertLabel}
               >
-                CATCH-UP AVAILABLE
+                CATCHUP AVAILABLE
               </ThemedText>
 
               <View style={styles.newPill}>
@@ -506,14 +497,13 @@ function CatchupAlert({
               allowFontScaling={false}
               style={styles.avatarText}
             >
-              {item?.sharedBy ? getInitials(item.sharedBy.name) : '··'}
+              {item.sharedBy ? getInitials(item.sharedBy.name) : '··'}
             </ThemedText>
           </View>
 
           <View style={styles.missedCopy}>
             <ThemedText style={styles.missedHeadline}>
-              {item?.lecture.title ??
-                'Shared lecture notes'}
+              {item.lecture.title}
             </ThemedText>
 
             <ThemedText
@@ -521,7 +511,7 @@ function CatchupAlert({
               style={styles.missedDescription}
               numberOfLines={2}
             >
-              Shared by {item?.sharedBy?.name ?? 'a classmate'} · {courseCode} · {item?.course?.name}
+              Shared by {item.sharedBy?.name ?? 'a classmate'} · {courseCode} · {item.course?.name}
             </ThemedText>
           </View>
 
@@ -539,7 +529,7 @@ function CatchupAlert({
   );
 }
 
-function CatchupSheet({
+function CatchUpSheet({
   visible,
   item,
   added,
@@ -550,7 +540,7 @@ function CatchupSheet({
   onAdd,
 }: {
   visible: boolean;
-  item: CatchupItem | null;
+  item: CatchUpItem | null;
   added: boolean;
   busy: boolean;
   copiedId?: string;
@@ -592,7 +582,7 @@ function CatchupSheet({
           <View style={styles.sheetHeader}>
             <View style={styles.sheetHeaderCopy}>
               <ThemedText style={styles.sheetTitle}>
-                {item?.lecture.title ?? 'Catch-up available'}
+                {item?.lecture.title ?? 'CatchUp available'}
               </ThemedText>
 
               <View style={styles.coursePill}>
@@ -607,7 +597,7 @@ function CatchupSheet({
 
             <Pressable
               accessibilityRole="button"
-              accessibilityLabel="Close catch-up"
+              accessibilityLabel="Close CatchUp"
               onPress={onClose}
               style={styles.closeButton}
             >
@@ -629,7 +619,7 @@ function CatchupSheet({
             </ThemedText>
 
             <ThemedText style={styles.missedDateText}>
-              You didn't capture this lecture
+              You didn&apos;t capture this lecture
             </ThemedText>
           </View>
 
@@ -670,7 +660,7 @@ function CatchupSheet({
 
           <View style={styles.coveredCard}>
             <ThemedText style={styles.coveredTitle}>
-              What's covered
+              What&apos;s covered
             </ThemedText>
 
             <View style={styles.topicChips}>
@@ -742,7 +732,7 @@ function CatchupSheet({
             type="small"
             style={styles.copyNote}
           >
-            This creates your own copy. Your edits won't affect the original shared notes.
+            This creates your own copy. Your edits won&apos;t affect the original shared notes.
           </ThemedText>
 
           {item ? (
@@ -769,7 +759,7 @@ function CatchupSheet({
               <ThemedText
                 style={styles.openNotebookText}
               >
-                {copiedId ? 'Open My Notes →' : 'Open Assembly lecture →'}
+                {copiedId ? 'Open My Notes →' : 'Open Shared Lecture →'}
               </ThemedText>
             </Pressable>
           ) : null}
@@ -786,7 +776,7 @@ function CatchupSheet({
               type="small"
               style={styles.consentText}
             >
-              CatchupMate sharing should only surface material from classmates who have opted into course sharing.
+              CatchUp sharing should only surface material from classmates who have opted into course sharing.
             </ThemedText>
           </View>
           </ScrollView>

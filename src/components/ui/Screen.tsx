@@ -7,6 +7,7 @@ import type {
 import {
   KeyboardAvoidingView,
   Platform,
+  RefreshControl,
   ScrollView,
   StyleSheet,
   View,
@@ -29,6 +30,9 @@ type Props = PropsWithChildren<{
    * element. Off by default, so no existing screen moves.
    */
   headerAbove?: boolean;
+  /** Enables native pull-to-refresh for screens backed by refreshable data. */
+  refreshing?: boolean;
+  onRefresh?: () => void;
 }>;
 
 export function Screen({
@@ -37,6 +41,8 @@ export function Screen({
   avoidKeyboard = false,
   showBottomNav = false,
   headerAbove = false,
+  refreshing = false,
+  onRefresh,
 }: Props) {
   const theme = useTheme();
   const headerHeight = useHeaderHeight();
@@ -52,6 +58,9 @@ export function Screen({
       ]}
     >
       <ScrollView
+        refreshControl={onRefresh ? (
+          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+        ) : undefined}
         style={avoidKeyboard && styles.scroll}
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"

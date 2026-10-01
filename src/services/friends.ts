@@ -1,7 +1,20 @@
+import 'expo-sqlite/localStorage/install';
+
 import { getDataMode } from '@/lib/dataMode';
 import type { FriendRequest, Profile } from '@/types';
 
 const profileColumns = 'id, name, year, major, is_demo';
+const dismissedRequestKey = (ownerId: string) => `classlens.friendRequests.dismissed.v1.${ownerId}`;
+
+function dismissedRequests(ownerId: string): Set<string> {
+  try {
+    const value = globalThis.localStorage.getItem(dismissedRequestKey(ownerId));
+    const parsed: unknown = value ? JSON.parse(value) : [];
+    return new Set(Array.isArray(parsed) ? parsed.filter((id): id is string => typeof id === 'string') : []);
+  } catch {
+    return new Set();
+  }
+}
 
 function requireSupabase(action: string) {
   if (getDataMode() !== 'supabase') {
@@ -49,6 +62,7 @@ export async function searchProfiles(query: string): Promise<Profile[]> {
   const { data, error } = await supabase
     .from('profiles')
     .select(profileColumns)
+    .eq('is_demo', false)
     .ilike('name', `%${term}%`)
     .neq('id', id)
     .order('name')
@@ -85,7 +99,7 @@ async function profilesByIds(ids: string[]): Promise<Map<string, Profile>> {
   return new Map(data.map((row) => [row.id, toProfile(row)]));
 }
 
-/** Accepted friends only. This is what Catch Up lists. */
+/** Accepted, non-demo friends only. This is what CatchUp lists. */
 export async function getFriends(): Promise<Profile[]> {
   if (getDataMode() !== 'supabase') return [];
   const { rows, id } = await myFriendships();
@@ -94,7 +108,7 @@ export async function getFriends(): Promise<Profile[]> {
   const profiles = await profilesByIds(others);
   return others
     .map((other) => profiles.get(other))
-    .filter((profile): profile is Profile => profile !== undefined)
+    .filter((profile): profile is Profile => profile !== undefined && !profile.isDemo)
     .sort((a, b) => a.name.localeCompare(b.name));
 }
 
@@ -102,14 +116,27 @@ export async function getFriends(): Promise<Profile[]> {
 export async function getIncomingRequests(): Promise<FriendRequest[]> {
   if (getDataMode() !== 'supabase') return [];
   const { rows, id } = await myFriendships();
+  const dismissed = dismissedRequests(id);
   const incoming = rows.filter((row) => row.status === 'pending' && row.addressee_id === id);
   const profiles = await profilesByIds(incoming.map((row) => row.requester_id));
   return incoming
     .map((row) => {
       const from = profiles.get(row.requester_id);
-      return from ? { id: row.id, from } : null;
+      return from && !from.isDemo && !dismissed.has(row.id) ? { id: row.id, from } : null;
     })
     .filter((request): request is FriendRequest => request !== null);
+}
+
+/**
+ * The current schema intentionally grants no friendship DELETE. Keep Decline
+ * honest by treating it as an account-scoped local dismissal until a dedicated
+ * server policy is introduced.
+ */
+export async function declineFriendRequestLocally(friendshipId: string): Promise<void> {
+  const { id } = await session();
+  const dismissed = dismissedRequests(id);
+  dismissed.add(friendshipId);
+  globalThis.localStorage.setItem(dismissedRequestKey(id), JSON.stringify([...dismissed]));
 }
 
 /** IDs already requested or accepted, so the UI can show Pending or Friends. */

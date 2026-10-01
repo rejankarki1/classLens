@@ -24,6 +24,8 @@ import { getCurrentUserId } from '@/services/auth';
 import {
   acceptDemoFriendship,
   acceptFriendRequest,
+  declineFriendRequestLocally,
+  getFriends,
   getFriendshipStates,
   getIncomingRequests,
   searchProfiles,
@@ -38,7 +40,7 @@ function message(error: unknown): string {
 type Props = {
   visible: boolean;
   onClose: () => void;
-  /** Lets Catch Up reload its friend list after a request is accepted. */
+  /** Lets CatchUp reload its friend list after a request is accepted. */
   onChanged: () => void;
 };
 
@@ -51,18 +53,21 @@ export function AddFriendSheet({ visible, onClose, onChanged }: Props) {
   const [results, setResults] = useState<Profile[]>([]);
   const [states, setStates] = useState<Map<string, 'pending' | 'accepted'>>(new Map());
   const [requests, setRequests] = useState<FriendRequest[]>([]);
+  const [friends, setFriends] = useState<Profile[]>([]);
   const [searching, setSearching] = useState(false);
   const [working, setWorking] = useState<string | null>(null);
   const [error, setError] = useState('');
 
   const refresh = useCallback(async () => {
     try {
-      const [incoming, current] = await Promise.all([
+      const [incoming, current, accepted] = await Promise.all([
         getIncomingRequests(),
         getFriendshipStates(),
+        getFriends(),
       ]);
       setRequests(incoming);
       setStates(current);
+      setFriends(accepted);
     } catch (caught) {
       setError(message(caught));
     }
@@ -71,7 +76,6 @@ export function AddFriendSheet({ visible, onClose, onChanged }: Props) {
   useEffect(() => {
     if (!visible) return;
     let active = true;
-    setError('');
     // Friendships are authenticated-only by design, so check before querying.
     void getCurrentIn();
 
@@ -93,17 +97,14 @@ export function AddFriendSheet({ visible, onClose, onChanged }: Props) {
   useEffect(() => {
     if (!visible || !signedIn) return;
     const term = query.trim();
-    if (term.length < 2) {
-      setResults([]);
-      return;
-    }
+    if (term.length < 2) return;
     let active = true;
-    setSearching(true);
     const timer = setTimeout(() => {
+      setSearching(true);
       searchProfiles(term)
         .then((found) => { if (active) setResults(found); })
         .catch((caught) => { if (active) setError(message(caught)); })
-        .finally(() => { if (active) setSearching(false); });
+        .finally(() => setSearching(false));
     }, 300);
     return () => { active = false; clearTimeout(timer); };
   }, [query, visible, signedIn]);
@@ -152,6 +153,20 @@ export function AddFriendSheet({ visible, onClose, onChanged }: Props) {
     }
   }
 
+  async function decline(request: FriendRequest) {
+    if (working) return;
+    setWorking(request.id);
+    setError('');
+    try {
+      await declineFriendRequestLocally(request.id);
+      await refresh();
+    } catch (caught) {
+      setError(message(caught));
+    } finally {
+      setWorking(null);
+    }
+  }
+
   // An absolute number beats a percentage here: the sheet's parent is
   // content-sized, so a percentage maxHeight resolves against nothing.
   const sheetMax = Math.round(height * 0.75);
@@ -186,7 +201,7 @@ export function AddFriendSheet({ visible, onClose, onChanged }: Props) {
 
             <View style={styles.header}>
               <View style={styles.headerCopy}>
-                <ThemedText style={styles.eyebrow}>CATCHUPMATE</ThemedText>
+                <ThemedText style={styles.eyebrow}>CATCHUP</ThemedText>
                 <ThemedText style={styles.title}>Add a classmate</ThemedText>
               </View>
 
@@ -208,7 +223,7 @@ export function AddFriendSheet({ visible, onClose, onChanged }: Props) {
             ) : signedIn === false ? (
               <View style={styles.signedOut}>
                 <ThemedText style={styles.body}>
-                  Sign in to add classmates. Catch Up shares notes between real
+                  Sign in to add classmates. CatchUp shares notes between real
                   accounts, so friends need you signed in.
                 </ThemedText>
 
@@ -259,20 +274,62 @@ export function AddFriendSheet({ visible, onClose, onChanged }: Props) {
                             </ThemedText>
                           </View>
 
-                          <Pressable
-                            accessibilityRole="button"
-                            accessibilityLabel={`Accept ${request.from.name}`}
-                            disabled={working !== null}
-                            onPress={() => accept(request)}
-                            style={({ pressed }) => [
-                              styles.action,
-                              (pressed || working !== null) && styles.dim,
-                            ]}
-                          >
-                            {working === request.id
-                              ? <ActivityIndicator color={Brand.ink} />
-                              : <ThemedText style={styles.actionText}>Accept</ThemedText>}
-                          </Pressable>
+                          <View style={styles.requestActions}>
+                            <Pressable
+                              accessibilityRole="button"
+                              accessibilityLabel={`Decline ${request.from.name}`}
+                              disabled={working !== null}
+                              onPress={() => decline(request)}
+                              style={({ pressed }) => [
+                                styles.secondaryAction,
+                                (pressed || working !== null) && styles.dim,
+                              ]}
+                            >
+                              <ThemedText style={styles.secondaryActionText}>Decline</ThemedText>
+                            </Pressable>
+
+                            <Pressable
+                              accessibilityRole="button"
+                              accessibilityLabel={`Accept ${request.from.name}`}
+                              disabled={working !== null}
+                              onPress={() => accept(request)}
+                              style={({ pressed }) => [
+                                styles.action,
+                                (pressed || working !== null) && styles.dim,
+                              ]}
+                            >
+                              {working === request.id
+                                ? <ActivityIndicator color={Brand.ink} />
+                                : <ThemedText style={styles.actionText}>Accept</ThemedText>}
+                            </Pressable>
+                          </View>
+                        </View>
+                      ))}
+                    </View>
+                  ) : null}
+
+                  {friends.length ? (
+                    <View style={styles.group}>
+                      <ThemedText style={styles.label}>FRIENDS</ThemedText>
+
+                      {friends.map((friend) => (
+                        <View key={friend.id} style={styles.row}>
+                          <View style={styles.avatar}>
+                            <ThemedText allowFontScaling={false} style={styles.avatarText}>
+                              {getInitials(friend.name) || '··'}
+                            </ThemedText>
+                          </View>
+
+                          <View style={styles.rowCopy}>
+                            <ThemedText style={styles.rowName}>{friend.name}</ThemedText>
+                            <ThemedText style={styles.rowMeta}>
+                              {friend.year} · {friend.major}
+                            </ThemedText>
+                          </View>
+
+                          <View style={styles.badge}>
+                            <ThemedText style={styles.badgeText}>Friends</ThemedText>
+                          </View>
                         </View>
                       ))}
                     </View>
@@ -288,13 +345,13 @@ export function AddFriendSheet({ visible, onClose, onChanged }: Props) {
                     </ThemedText>
                   ) : null}
 
-                  {!searching && query.trim().length < 2 && requests.length === 0 ? (
+                  {!searching && query.trim().length < 2 && requests.length === 0 && friends.length === 0 ? (
                     <ThemedText style={styles.rowMeta}>
                       Type at least two letters of a classmate&apos;s name to find them.
                     </ThemedText>
                   ) : null}
 
-                  {results.map((profile) => {
+                  {(query.trim().length >= 2 ? results : []).map((profile) => {
                     const state = states.get(profile.id);
                     return (
                       <View key={profile.id} style={styles.row}>
@@ -415,6 +472,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14, borderRadius: 12, backgroundColor: Brand.lime,
   },
   actionText: { color: Brand.ink, fontWeight: '700', fontSize: 14 },
+  requestActions: { flexShrink: 0, gap: 6 },
+  secondaryAction: {
+    minHeight: 36, minWidth: 84, alignItems: 'center', justifyContent: 'center',
+    paddingHorizontal: 12, borderRadius: 12, borderWidth: 1, borderColor: '#6F927E',
+  },
+  secondaryActionText: { color: '#DCE7DA', fontWeight: '700', fontSize: 13 },
 
   badge: {
     minHeight: 40, flexShrink: 0, justifyContent: 'center',

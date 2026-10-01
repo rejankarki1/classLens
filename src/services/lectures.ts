@@ -110,7 +110,7 @@ export async function createLecture(input: CreateLectureInput): Promise<Lecture>
   const { randomUUID } = await import('expo-crypto');
   const { supabase } = await import('@/lib/supabase');
   const id = randomUUID();
-  // owner_id is what makes a lecture yours, and what Catch Up shares by.
+  // owner_id is what makes a lecture yours, and what CatchUp shares by.
   const { data: auth } = await supabase.auth.getSession();
   const ownerId = auth.session?.user.id;
   if (!ownerId) throw new Error('You are signed out. Sign in and try again.');
@@ -128,7 +128,7 @@ export async function createLecture(input: CreateLectureInput): Promise<Lecture>
 /** A friend's lecture, carrying who shared it so the UI can credit them. */
 export type SharedLecture = Lecture & { ownerId: string };
 
-/** Catch Up: lectures shared by the given classmates, newest first. */
+/** CatchUp: lectures shared by the given classmates, newest first. */
 export async function getLecturesByOwners(ownerIds: string[]): Promise<SharedLecture[]> {
   if (getDataMode() !== 'supabase' || !ownerIds.length) return [];
   const { supabase } = await import('@/lib/supabase');
@@ -145,7 +145,7 @@ export async function getLecturesByOwners(ownerIds: string[]): Promise<SharedLec
 
 /** Copy saved analysis and real captures; retries resume the same user's copy. */
 export async function copyLectureToMyNotes(lectureId: string, courseId?: string): Promise<Lecture> {
-  if (getDataMode() !== 'supabase') throw new Error('Catch Up requires EXPO_PUBLIC_DATA_MODE=supabase.');
+  if (getDataMode() !== 'supabase') throw new Error('CatchUp requires EXPO_PUBLIC_DATA_MODE=supabase.');
   const { supabase } = await import('@/lib/supabase');
   const { copyLectureMaterials } = await import('./materials');
   const { data: auth, error: authError } = await supabase.auth.getUser();
