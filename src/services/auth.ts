@@ -152,6 +152,8 @@ export async function updateRecoveredPassword(password: string): Promise<void> {
   if (error) throw new Error(error.message);
   const { error: signOutError } = await supabase.auth.signOut({ scope: 'local' });
   if (signOutError) throw new Error(signOutError.message);
+  const { syncPurchaseIdentity } = await import('./purchases');
+  await syncPurchaseIdentity(null).catch(() => undefined);
 }
 
 export async function signOut(): Promise<void> {
@@ -165,6 +167,8 @@ export async function signOut(): Promise<void> {
   const { supabase } = await import('@/lib/supabase');
   const { error } = await supabase.auth.signOut();
   if (error) throw new Error(error.message);
+  const { syncPurchaseIdentity } = await import('./purchases');
+  await syncPurchaseIdentity(null).catch(() => undefined);
 }
 
 export async function deleteAccount(): Promise<void> {
@@ -182,6 +186,8 @@ export async function deleteAccount(): Promise<void> {
   clearPendingSignupEmail();
   const { error: signOutError } = await supabase.auth.signOut({ scope: 'local' });
   if (signOutError) throw new Error(signOutError.message);
+  const { syncPurchaseIdentity } = await import('./purchases');
+  await syncPurchaseIdentity(null).catch(() => undefined);
 }
 
 /** Null means onboarding has not been completed yet. */

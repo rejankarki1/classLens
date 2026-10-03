@@ -139,10 +139,26 @@ export async function generateQuiz(lectureId: string): Promise<GenerateQuizResul
     if (error.context instanceof Response) {
       try {
         const result = await error.context.json();
+        if (result?.error?.code === 'QUIZ_LIMIT_REACHED') throw new QuizLimitReachedError();
         if (typeof result?.error?.message === 'string') message = result.error.message;
-      } catch { /* Keep a useful message for gateway failures. */ }
+      } catch (caught) { if (caught instanceof QuizLimitReachedError) throw caught; }
     }
     throw new Error(message);
   }
   return parseQuizResult(data);
+}
+
+export class QuizLimitReachedError extends Error {
+  constructor() { super('You have used your three free quizzes in the last seven days.'); }
+}
+
+export async function getQuizUsageStatus(): Promise<{ isPro: boolean; remaining: number | null }> {
+  if (getDataMode() !== 'supabase') return { isPro: false, remaining: null };
+  const { supabase } = await import('@/lib/supabase');
+  const { data, error } = await supabase.functions.invoke('generate-quiz', { body: { action: 'status' } });
+  if (error || typeof data?.isPro !== 'boolean' ||
+    !(data.remaining === null || (Number.isInteger(data.remaining) && data.remaining >= 0 && data.remaining <= 3))) {
+    throw new Error('Could not load quiz uses.');
+  }
+  return { isPro: data.isPro, remaining: data.remaining };
 }

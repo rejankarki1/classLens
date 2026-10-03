@@ -52,13 +52,25 @@ The existing `_shared/ai.ts` supplies `requireCallerAuthorization` and the Gemin
 call. Model: gemini-3.1-flash-lite. Deadline: 60 seconds; output cap: 4096 tokens.
 No retries. Quiz *attempts* and missed-question persistence (new this session) live in
 `src/services/quizAttempts.ts` and the `quiz_attempts` / `quiz_missed_questions` tables --
-this function itself remains stateless generation only, no history or scoring.
+this function persists only quota usage through the server-only `quiz_usage` table.
 
-Reuse existing Supabase secrets GEMINI_API_KEY and CLASSLENS_DEMO_PUBLISHABLE_KEY,
-and supplied SUPABASE_URL. No secrets belong in Expo. The handler checks apikey and the
-real caller Authorization; verify_jwt=false, same deploy shape as before. Public key
-holders can still consume quota. Database and Storage use existing owner-scoped RLS,
-never a service-role key.
+Apply `20260930040000_quiz_usage.sql` before deploying this function. Keep
+`REVENUECAT_SECRET_KEY` in Supabase Edge Function secrets. The function also uses
+Supabase-provided `SUPABASE_SERVICE_ROLE_KEY` for the three quota RPCs. Never place
+either server key in Expo. The iOS debug client uses only
+`EXPO_PUBLIC_REVENUECAT_IOS_KEY`, with a RevenueCat Test Store product in the current
+offering mapped to entitlement `pro`.
+
+The handler validates the caller token against Supabase Auth and uses that user ID
+for both the RevenueCat subscriber lookup and quota reservation. An absent or failing
+RevenueCat secret/check treats the caller as free. Three successful generations are
+allowed in the rolling last seven days; two-minute in-flight reservations also count
+until completed or released. Reserve and finish take the same per-user database
+lock. Finishing an expired reservation rechecks the current quota; a full quota
+returns `quota_reached` and no quiz. Completion and release retain their outcome
+for idempotent retries after a lost RPC response. A fourth free request returns 429 `QUIZ_LIMIT_REACHED`
+before Gemini. POST `{ "action": "status" }` returns `{ "isPro": boolean,
+"remaining": number | null }`, with null remaining for Pro.
 
 Deploy only this function from the repository root:
 
@@ -66,10 +78,9 @@ Deploy only this function from the repository root:
 npx --yes supabase@2.75.0 functions deploy generate-quiz --project-ref yeneypkyvdfpdtspswha --no-verify-jwt --use-api
 ```
 
-No migration is required for this function itself (the new quiz_attempts /
-quiz_missed_questions tables are a separate, additive migration). Existing deployed
-functions need not be redeployed for this new endpoint. The local Q&A context extraction
-is behavior-preserving for the lecture-fields-only fallback path.
+The quota migration and updated function must deploy together. Existing deployed
+functions need not be redeployed. A debug iOS native rebuild is required for the
+RevenueCat modules; the Test Store key must never be used for TestFlight or release.
 
 Checks:
 

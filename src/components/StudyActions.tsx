@@ -1,7 +1,8 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, TextInput, View } from 'react-native';
 import { Brand } from '@/constants/theme';
-import { askLecture, generateQuiz } from '@/services/ai';
+import { askLecture, generateQuiz, getQuizUsageStatus, QuizLimitReachedError } from '@/services/ai';
+import { presentProPaywall } from '@/services/purchases';
 import { recordMissedQuestion, saveQuizAttempt } from '@/services/quizAttempts';
 import type { GenerateQuizResult } from '@/types';
 import { ThemedText } from './themed-text';
@@ -23,6 +24,14 @@ export function StudyActions({ lectureId }: { lectureId: string }) {
   const [finished, setFinished] = useState(false);
   const [busy, setBusy] = useState<'ask' | 'quiz' | null>(null);
   const [error, setError] = useState('');
+  const [quizStatus, setQuizStatus] = useState<{ isPro: boolean; remaining: number | null } | null>(null);
+  const [limitReached, setLimitReached] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    void getQuizUsageStatus().then((status) => { if (active) setQuizStatus(status); }).catch(() => undefined);
+    return () => { active = false; };
+  }, []);
 
   /** Replay the questions already in state; never re-requests from Gemini. */
   function restart() {
@@ -58,11 +67,24 @@ export function StudyActions({ lectureId }: { lectureId: string }) {
     try {
       const result = await generateQuiz(lectureId);
       setQuiz(result);
+      setLimitReached(false);
+      void getQuizUsageStatus().then(setQuizStatus).catch(() => undefined);
       restart();
       // Best-effort: a persistence failure must never block taking the quiz.
       saveQuizAttempt(lectureId, result).then((saved) => setAttemptId(saved.id)).catch(() => setAttemptId(null));
     } catch (caught) {
       setError(message(caught));
+      if (caught instanceof QuizLimitReachedError) {
+        setLimitReached(true);
+        void getQuizUsageStatus().then(setQuizStatus).catch(() => undefined);
+        try {
+          await presentProPaywall();
+          void getQuizUsageStatus().then((status) => {
+            setQuizStatus(status);
+            if (status.isPro) setLimitReached(false);
+          }).catch(() => undefined);
+        } catch { /* Missing debug key leaves the server limit in place. */ }
+      }
     } finally {
       setBusy(null);
     }
@@ -93,6 +115,15 @@ export function StudyActions({ lectureId }: { lectureId: string }) {
     <ThemedText style={styles.label}>✦  GO FROM KNOWING TO UNDERSTANDING</ThemedText>
     <ThemedText style={styles.title}>Make it click.</ThemedText>
     <ThemedText style={styles.body}>Ask the question you didn’t get to ask. Put your understanding to the test.</ThemedText>
+    {quizStatus ? <ThemedText style={styles.body} accessibilityLiveRegion="polite">
+      {quizStatus.isPro ? 'ClassLens Pro ✓ · Unlimited quizzes' : `${quizStatus.remaining ?? 0} free quiz uses left in the last seven days`}
+    </ThemedText> : null}
+    {limitReached ? <AppButton title="Open ClassLens Pro" secondary onPress={() => {
+      void presentProPaywall().then(() => getQuizUsageStatus()).then((status) => {
+        setQuizStatus(status);
+        if (status.isPro) setLimitReached(false);
+      }).catch(() => undefined);
+    }} /> : null}
 
     <TextInput
       value={question}

@@ -17,6 +17,7 @@ import { StatusBar } from 'expo-status-bar';
 import { useTheme } from '@/hooks/use-theme';
 import { Brand } from '@/constants/theme';
 import { getCurrentUserId, getMyProfile, getPendingSignupEmail, onAuthChange, onProfileChange } from '@/services/auth';
+import { syncPurchaseIdentity } from '@/services/purchases';
 import { hasEnrolledCourses, onEnrollmentChange } from '@/services/enrollment';
 import { registerProcessingBackgroundTask, unregisterProcessingBackgroundTask } from '@/services/processingBackground';
 import { resumeProcessingJobs } from '@/services/processingOrchestrator';
@@ -75,7 +76,7 @@ function useAuthGate() {
       }
     }
 
-    void getCurrentUserId().then(resolve);
+    void getCurrentUserId().then((id) => { void syncPurchaseIdentity(id); return resolve(id); });
 
     // Onboarding saves through the service, so re-resolve to release the gate.
     const stopProfileWatch = onProfileChange(() => {
@@ -86,7 +87,7 @@ function useAuthGate() {
     });
 
     let unsubscribe: (() => void) | undefined;
-    void onAuthChange((id) => { void resolve(id); }).then((off) => {
+    void onAuthChange((id) => { void syncPurchaseIdentity(id); void resolve(id); }).then((off) => {
       if (active) unsubscribe = off; else off();
     });
 

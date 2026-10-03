@@ -14,7 +14,7 @@ const storage = {
   setItem: (key, value) => values.set(key, value),
   removeItem: (key) => values.delete(key),
 };
-const calls = { resend: [], recovery: [], verify: [], updates: [], signOut: [], functions: [], staged: [] };
+const calls = { resend: [], recovery: [], verify: [], updates: [], signOut: [], functions: [], staged: [], purchaseIdentity: [] };
 let session = null;
 let signUpSession = null;
 const supabase = {
@@ -43,6 +43,7 @@ vm.runInNewContext(code, {
     if (name === '@/lib/supabase') return { supabase };
     if (name === './pushTokens') return { removeMyDeviceTokens: async () => {} };
     if (name === './processingLocal') return { removeStagedCapturesForOwner: (owner) => calls.staged.push(owner) };
+    if (name === './purchases') return { syncPurchaseIdentity: async (id) => calls.purchaseIdentity.push(id) };
     if (name === '@/types') return {};
     throw new Error(`Unexpected import: ${name}`);
   },
@@ -66,16 +67,19 @@ vm.runInNewContext(code, {
   await exportsObject.updateRecoveredPassword('newpass');
   assert.equal(calls.updates[0].password, 'newpass');
   assert.equal(calls.signOut.at(-1).scope, 'local');
+  assert.equal(calls.purchaseIdentity.at(-1), null);
 
   session = { user: { id: 'owner-1' } };
   await exportsObject.signOut();
   assert.equal(calls.staged.at(-1), 'owner-1');
+  assert.equal(calls.purchaseIdentity.at(-1), null);
 
   session = { user: { id: 'owner-1' } };
   await exportsObject.deleteAccount();
   assert.equal(calls.functions.at(-1).name, 'delete-account');
   assert.equal(calls.staged.at(-1), 'owner-1');
   assert.equal(calls.signOut.at(-1).scope, 'local');
+  assert.equal(calls.purchaseIdentity.at(-1), null);
 
   console.log('PASS: signup persistence/resend, recovery OTP, sign-out cleanup, and account deletion session cleanup.');
 })().catch((error) => { console.error(error); process.exitCode = 1; });

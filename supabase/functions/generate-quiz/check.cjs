@@ -1,3 +1,4 @@
+/* global __dirname */
 // Offline checks using the repository's existing TypeScript compiler and Node runtime.
 // No secrets, cloud requests, or external test dependencies.
 const fs = require('node:fs');
@@ -32,7 +33,8 @@ const id = 'test-lecture';
 const analysisId = 'analysis-1';
 const page1Id = 'e5a09744-2ed8-4f81-a297-05b4cc6f7fa4';
 const page2Id = 'a1b2c3d4-2ed8-4f81-a297-05b4cc6f7fa4';
-const config = { supabaseUrl: 'https://example.invalid', publishableKey: 'test-key', geminiKey: 'secret-test' };
+const ownerId = 'f31c6526-1537-4c10-958d-a11f4dfc621a';
+const config = { supabaseUrl: 'https://example.invalid', publishableKey: 'test-key', geminiKey: 'secret-test', serviceRoleKey: 'service-test', revenuecatSecretKey: '' };
 
 const lecture = {
   id, title: 'BST', summary: 'Three deletion cases', key_concepts: ['BST'],
@@ -66,9 +68,44 @@ function request(body = { lectureId: id }, { key = 'test-key', method = 'POST', 
 function setup(overrides = {}) {
   let calls = 0;
   const requestedUrls = [];
+  const usage = { used: overrides.used ?? 0, active: new Set(), states: new Map(), completed: 0, released: 0, finishCalls: 0 };
   const fetcher = async (url, init = {}) => {
     calls += 1;
     requestedUrls.push(url);
+    if (url.includes('/auth/v1/user')) return overrides.authFailure ? new Response('', { status: 401 }) : json({ id: ownerId });
+    if (url.includes('api.revenuecat.com')) {
+      if (overrides.revenuecatOutage) throw new Error('RevenueCat unavailable');
+      if (overrides.revenuecatHttpStatus) return new Response('', { status: overrides.revenuecatHttpStatus });
+      if (overrides.revenuecatMalformed) return new Response('invalid json', { status: 200 });
+      return json({ subscriber: { entitlements: overrides.pro ? { pro: { purchase_date: '2026-01-01', expires_date: null } } : {} } });
+    }
+    if (url.includes('/rest/v1/rpc/quiz_uses_remaining')) return json(Math.max(0, 3 - usage.used - usage.active.size));
+    if (url.includes('/rest/v1/rpc/reserve_quiz_use')) {
+      assert.equal(init.headers.apikey, 'service-test');
+      assert.equal(JSON.parse(init.body).p_owner_id, ownerId);
+      if (usage.used + usage.active.size >= 3) return json({ reservationId: null, remaining: 0 });
+      const reservationId = `reservation-${usage.active.size + usage.completed + usage.released}`;
+      usage.active.add(reservationId);
+      usage.states.set(reservationId, 'reserved');
+      return json({ reservationId, remaining: 3 - usage.used - usage.active.size });
+    }
+    if (url.includes('/rest/v1/rpc/finish_quiz_use')) {
+      const body = JSON.parse(init.body);
+      usage.finishCalls += 1;
+      if (!body.p_success && overrides.releaseHttpFailure) return new Response('', { status: 500 });
+      const prior = usage.states.get(body.p_reservation_id);
+      let outcome = prior ?? 'not_found';
+      if (prior === 'reserved') {
+        usage.active.delete(body.p_reservation_id);
+        if (body.p_success && overrides.quotaOnFinish) outcome = 'quota_reached';
+        else if (body.p_success) { outcome = 'completed'; usage.completed += 1; usage.used += 1; }
+        else { outcome = 'released'; usage.released += 1; }
+        usage.states.set(body.p_reservation_id, outcome === 'quota_reached' ? 'released' : outcome);
+      }
+      if (body.p_success && overrides.completionResponseLostOnce && usage.finishCalls === 1) throw new Error('completion response lost');
+      if (!body.p_success && overrides.releaseResponseLostOnce && usage.finishCalls === 1) throw new Error('release response lost');
+      return json({ outcome });
+    }
     if (url.includes('/rest/v1/lectures?')) {
       assert.equal(new URL(url).searchParams.get('id'), `eq.${id}`);
       return overrides.dbError ? new Response('', { status: 500 }) : json(overrides.lectures ?? [lecture]);
@@ -94,7 +131,7 @@ function setup(overrides = {}) {
     }
     throw new Error(`Unexpected request: ${url}`);
   };
-  return { handler: createHandler({ ...config, ...overrides.config }, fetcher), calls: () => calls, requestedUrls };
+  return { handler: createHandler({ ...config, ...overrides.config }, fetcher), calls: () => calls, requestedUrls, usage };
 }
 
 (async () => {
@@ -115,7 +152,7 @@ function setup(overrides = {}) {
     assert.deepEqual(body.questions[0].citedPages, [1], 'page 99 must be filtered out');
     assert.deepEqual(body.questions[1].citedPages, [2]);
     assert.deepEqual(body.questions[2].citedPages, []);
-    assert.equal(calls(), 4, 'lectures + capture_analyses + notebook_corrections + gemini');
+    assert.equal(calls(), 7, 'auth + notebook context + reservation + gemini + completion');
   }
   console.log('PASS: a grounded quiz keeps valid citations and strips a page number outside the supplied notebook pages.');
 
@@ -124,10 +161,108 @@ function setup(overrides = {}) {
     const { handler, calls, requestedUrls } = setup({ lectures: [{ ...lecture, capture_analysis_id: null }], assertSentPages: (pages) => assert.deepEqual(pages, []) });
     const response = await handler(request());
     assert.equal(response.status, 200);
-    assert.equal(calls(), 2, 'lectures + gemini only');
+    assert.equal(calls(), 5, 'auth + lecture + reservation + gemini + completion');
     assert.equal(requestedUrls.some((url) => url.includes('capture_analyses') || url.includes('notebook_corrections')), false);
   }
   console.log('PASS: a lecture with no capture_analysis_id grounds from lecture fields only, with zero notebook pages.');
+
+  {
+    const { handler, usage, requestedUrls } = setup({ used: 3 });
+    const response = await handler(request());
+    assert.equal(response.status, 429);
+    assert.equal((await response.json()).error.code, 'QUIZ_LIMIT_REACHED');
+    assert.equal(requestedUrls.some((url) => url.includes(':generateContent')), false);
+    assert.equal(usage.active.size, 0);
+  }
+  console.log('PASS: a fourth free request stops before Gemini.');
+
+  {
+    const { handler, usage } = setup({ used: 2 });
+    const responses = await Promise.all([handler(request()), handler(request())]);
+    assert.deepEqual(responses.map((response) => response.status).sort(), [200, 429]);
+    assert.equal(usage.completed, 1);
+    assert.equal(usage.active.size, 0);
+  }
+  console.log('PASS: concurrent free requests share an atomic reservation boundary.');
+
+  {
+    const pro = setup({ used: 3, pro: true, config: { revenuecatSecretKey: 'rc-secret' } });
+    assert.equal((await pro.handler(request())).status, 200);
+    assert.equal(pro.usage.completed, 0);
+    assert.equal(pro.requestedUrls.some((url) => url.includes('/reserve_quiz_use')), false);
+    const outage = setup({ used: 3, revenuecatOutage: true, config: { revenuecatSecretKey: 'rc-secret' } });
+    const response = await outage.handler(request());
+    assert.equal(response.status, 429);
+    assert.equal((await response.json()).error.code, 'QUIZ_LIMIT_REACHED');
+  }
+  console.log('PASS: active Pro bypasses the quota and a RevenueCat outage uses the free quota.');
+
+  {
+    const originalInfo = console.info;
+    const messages = [];
+    console.info = (message) => messages.push(message);
+    try {
+      for (const overrides of [
+        { pro: true, expected: 'http_status=200 pro_active=true outcome=active' },
+        { expected: 'http_status=200 pro_active=false outcome=inactive' },
+        { revenuecatHttpStatus: 401, expected: 'http_status=401 pro_active=false outcome=http_error' },
+        { revenuecatMalformed: true, expected: 'http_status=200 pro_active=false outcome=invalid_response' },
+        { revenuecatOutage: true, expected: 'http_status=network_error pro_active=false outcome=network_error' },
+      ]) {
+        const { handler } = setup({ ...overrides, config: { revenuecatSecretKey: 'rc-secret' } });
+        await handler(request({ action: 'status' }));
+        const message = messages.pop();
+        assert.match(message, /^\[generate-quiz\] revenuecat_lookup /);
+        assert.ok(message.includes(overrides.expected), message);
+        assert.equal(message.includes(ownerId), false);
+        assert.equal(message.includes('rc-secret'), false);
+      }
+    } finally { console.info = originalInfo; }
+  }
+  console.log('PASS: RevenueCat diagnostics separate active, inactive, HTTP auth, invalid response, and network outcomes without customer or key data.');
+
+  {
+    const { handler, usage } = setup({ geminiStatus: 500 });
+    assert.equal((await handler(request())).status, 502);
+    assert.equal(usage.released, 1);
+    assert.equal(usage.used, 0);
+    const status = await handler(request({ action: 'status' }));
+    assert.deepEqual(await status.json(), { isPro: false, remaining: 3 });
+  }
+  console.log('PASS: failed Gemini generations release their reservation and status reads server usage.');
+
+  {
+    const { handler, usage } = setup({ completionResponseLostOnce: true });
+    assert.equal((await handler(request())).status, 200);
+    assert.equal(usage.completed, 1);
+    assert.equal(usage.finishCalls, 2, 'the same completion must be confirmed by retry');
+    assert.equal(usage.active.size, 0);
+  }
+  console.log('PASS: a lost completion response is confirmed without charging twice.');
+
+  {
+    const { handler, usage } = setup({ quotaOnFinish: true });
+    const response = await handler(request());
+    assert.equal(response.status, 429);
+    assert.equal((await response.json()).error.code, 'QUIZ_LIMIT_REACHED');
+    assert.equal(usage.completed, 0);
+    assert.equal(usage.active.size, 0);
+  }
+  console.log('PASS: a quota rejection at completion never returns the generated quiz.');
+
+  {
+    const lost = setup({ geminiStatus: 500, releaseResponseLostOnce: true });
+    assert.equal((await lost.handler(request())).status, 502);
+    assert.equal(lost.usage.released, 1);
+    assert.equal(lost.usage.finishCalls, 2);
+    const failed = setup({ geminiStatus: 500, releaseHttpFailure: true });
+    const response = await failed.handler(request());
+    assert.equal(response.status, 503);
+    assert.equal((await response.json()).error.code, 'USAGE_RELEASE_FAILED');
+    assert.equal(failed.usage.finishCalls, 2);
+    assert.equal(failed.usage.active.size, 1);
+  }
+  console.log('PASS: lost release replies retry safely, and failed release responses surface an explicit error.');
 
   // Missing Authorization: 401 before any REST call is attempted.
   {
@@ -143,16 +278,16 @@ function setup(overrides = {}) {
     ['wrong method', { method: 'GET' }, 405, 0],
     ['preflight', { method: 'OPTIONS' }, 204, 0],
     ['missing config', {}, 503, 0, { config: { geminiKey: '' } }],
-    ['missing lecture', {}, 404, 1, { lectures: [] }],
-    ['lecture read failure', {}, 502, 1, { dbError: true }],
-    ['saved analysis missing', {}, 502, 2, { analysisRows: [] }],
-    ['corrections read failure', {}, 502, 3, { correctionsError: true }],
-    ['quota', {}, 429, 4, { geminiStatus: 429 }],
-    ['provider error', {}, 502, 4, { geminiStatus: 500 }],
-    ['invalid quiz', {}, 502, 4, { answer: {} }],
-    ['insufficient context', {}, 422, 4, { answer: { error: 'INSUFFICIENT_CONTEXT' } }],
-    ['blocked', {}, 502, 4, { finishReason: 'SAFETY' }],
-    ['truncated', {}, 502, 4, { finishReason: 'MAX_TOKENS' }],
+    ['missing lecture', {}, 404, 2, { lectures: [] }],
+    ['lecture read failure', {}, 502, 2, { dbError: true }],
+    ['saved analysis missing', {}, 502, 3, { analysisRows: [] }],
+    ['corrections read failure', {}, 502, 4, { correctionsError: true }],
+    ['quota', {}, 429, 7, { geminiStatus: 429 }],
+    ['provider error', {}, 502, 7, { geminiStatus: 500 }],
+    ['invalid quiz', {}, 502, 7, { answer: {} }],
+    ['insufficient context', {}, 422, 7, { answer: { error: 'INSUFFICIENT_CONTEXT' } }],
+    ['blocked', {}, 502, 7, { finishReason: 'SAFETY' }],
+    ['truncated', {}, 502, 7, { finishReason: 'MAX_TOKENS' }],
   ];
   for (const [name, requestOptions, expectedStatus, expectedCalls, setupOverrides = {}] of cases) {
     const { handler, calls } = setup(setupOverrides);
@@ -172,7 +307,7 @@ function setup(overrides = {}) {
     const { handler, calls } = setup();
     const response = await handler(request(body));
     assert.equal(response.status, 400, name);
-    assert.equal(calls(), 0, name);
+    assert.equal(calls(), name === 'empty ID' ? 1 : 0, name);
   }
   console.log(`PASS: ${malformedCases.length} malformed-request cases are rejected before any database read.`);
 
