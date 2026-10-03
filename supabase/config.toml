@@ -1,9 +1,5 @@
 project_id = "classlens"
 
-[functions.analyze-material]
-verify_jwt = false
-entrypoint = "./functions/analyze-material/index.ts"
-
 [functions.analyze-captures]
 verify_jwt = true
 entrypoint = "./functions/analyze-captures/index.ts"

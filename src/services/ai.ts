@@ -2,10 +2,9 @@ import { FunctionsHttpError } from '@supabase/supabase-js';
 
 import { parseQuizInput, parseQuizResult } from '@/lib/quiz';
 import { parseAskLectureInput, parseAskLectureResult } from '@/lib/askLecture';
-import type { CaptureAnalysis, LectureAnalysis, Material, GenerateQuizResult, AskLectureResult } from '@/types';
+import type { CaptureAnalysis, GenerateQuizResult, AskLectureResult } from '@/types';
 
 import { getDataMode } from '@/lib/dataMode';
-import { parseLectureAnalysis } from '@/lib/lectureAnalysis';
 import { parseCaptureAnalysis } from '@/lib/captureAnalysis';
 
 type StructuredFunctionError = { code: string; message: string };
@@ -47,24 +46,6 @@ async function captureFunctionError(error: unknown): Promise<Error> {
   const safeMessage = structured?.message ?? fallback;
   if (__DEV__) console.error({ httpStatus, errorCode, message: safeMessage });
   return new Error(structured ? `${structured.code}: ${structured.message}` : fallback);
-}
-
-export async function analyzeMaterial(material: Material): Promise<LectureAnalysis> {
-  if (getDataMode() !== 'supabase') throw new Error('Analysis requires EXPO_PUBLIC_DATA_MODE=supabase.');
-  if (material.type !== 'photo') throw new Error('Only photos can be analyzed.');
-  const { supabase } = await import('@/lib/supabase');
-  const { data, error } = await supabase.functions.invoke('analyze-material', { body: { materialId: material.id } });
-  if (error) {
-    let message = 'Photo analysis failed. Check your connection and function deployment.';
-    if (error.context instanceof Response) {
-      try {
-        const body = await error.context.json();
-        if (typeof body?.error?.message === 'string') message = body.error.message;
-      } catch { /* Keep a useful message for non-JSON gateway errors. */ }
-    }
-    throw new Error(message);
-  }
-  return parseLectureAnalysis(data);
 }
 
 export async function analyzeCaptures(sessionId: string, captureIds: string[]): Promise<CaptureAnalysis> {
